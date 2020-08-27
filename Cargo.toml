@@ -1,0 +1,29 @@
+[package]
+name = "enrs"
+version = "0.2.0"
+authors = ["OvermindDL1 <overminddl1@gmail.com>"]
+edition = "2018"
+description = "EntityComponentSystem library for Rust based on the EnTT C++ Library Designs"
+
+[dependencies]
+indexmap = "1.5"
+
+[features]
+default = []
+enrs_disable_asserts = []
+
+[dev-dependencies]
+criterion = "0.3.1"
+# proc-macro2 = "1.0.9"
+# legion = "0.2.4"
+legion = { git = "https://github.com/TomGillen/legion" }
+shipyard = { git = "https://github.com/leudz/shipyard.git" }
+# specs = "0.16.1"
+
+[profile.release]
+# debug = false
+lto = "thin"
+
+[[bench]]
+name = "bench_main"
+harness = false
