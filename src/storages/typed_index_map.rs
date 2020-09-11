@@ -102,6 +102,7 @@ impl<T, I: TypedIndexMapIndexType> Into<usize> for TypedIndexMapIndex<T, I> {
 	}
 }
 
+/// Please see the documentation of `index_map::map::IndexMap` for details as this just wraps it.
 pub struct TypedIndexMap<T, K, V, IndexType: TypedIndexMapIndexType = usize, S = RandomState> {
 	index_map: IndexMap<K, V, S>,
 	_phantom: PhantomData<(T, IndexType)>,

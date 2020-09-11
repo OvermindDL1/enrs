@@ -26,3 +26,6 @@
 
 # Rust Source files
 !/src/**/*.rs
+
+# Rust benchmark files
+!/benches/**/*.rs

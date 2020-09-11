@@ -6,18 +6,20 @@ edition = "2018"
 description = "EntityComponentSystem library for Rust based on the EnTT C++ Library Designs"
 
 [dependencies]
-indexmap = "1.5"
+indexmap = "1.5" # Convenient implementation of an indexmap
+frunk = "0.3.1" # REMOVEABLE: Using this is easier than making my own for now, hopefully removed with variadic tuples in Rust later
+generic-array = "0.14.4" # REMOVEABLE: Because no const generics yet, remove this when those become stable
 
 [features]
 default = []
 enrs_disable_asserts = []
 
 [dev-dependencies]
-criterion = "0.3.1"
+criterion = "0.3.3"
 # proc-macro2 = "1.0.9"
 # legion = "0.2.4"
-legion = { git = "https://github.com/TomGillen/legion" }
-shipyard = { git = "https://github.com/leudz/shipyard.git" }
+# legion = { git = "https://github.com/TomGillen/legion" }
+# shipyard = { git = "https://github.com/leudz/shipyard.git" }
 # specs = "0.16.1"
 
 [profile.release]

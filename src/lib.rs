@@ -1,8 +1,10 @@
+pub use frunk;
+
 pub mod entity;
 pub mod registry;
-pub mod typed_index_map;
+pub mod storages;
 
-mod instances {
+mod entity_instances {
 	pub use crate as enrs;
 	use crate::unsigned_integral_entity;
 	unsigned_integral_entity!(
