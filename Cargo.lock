@@ -192,6 +192,7 @@ dependencies = [
  "frunk",
  "generic-array",
  "indexmap",
+ "rayon",
 ]
 
 [[package]]

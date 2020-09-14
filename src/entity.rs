@@ -2,9 +2,11 @@
 ///
 /// Can make a trivial tuple wrapper with the `delegate_wrapped_entity!` macro:
 ///
+/// If must `Default` to an `idx` and `generation` of `0`.
+///
 /// ```
 /// # use enrs::{delegate_wrapped_entity, entity::Entity};
-/// #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 /// struct Wrapper(u32);
 /// delegate_wrapped_entity!(Wrapper, u32);
 /// let mut e = Wrapper::new(42);
@@ -15,21 +17,14 @@
 /// assert_eq!(e.version(), 1);
 /// assert_eq!(e.0, 1048592);
 /// ```
-pub trait Entity: PartialEq + Copy + Ord {
+pub trait Entity: 'static + PartialEq + Copy + Ord + Default + std::fmt::Debug {
 	/// The actual container type of this entity date, it should be Copy, and thus cheap to Copy.
 	type StorageType;
 
 	/// The type returned to hold the version, smaller than the StorageType in general.
 	type VersionType;
-	//	type DifferenceType;
-	//	const ENTITY_MASK: Self::StorageType;
-	//	const VERSION_MASK: Self::StorageType;
-	//	const ENTITY_SHIFT: u32;
-	///// Must be what `Self::new(0)` returns.
-	//const NULL: Self;
 	/// Constructs an Entity Handle using the given ID and a 0 version
 	fn new(id: usize) -> Self;
-	//	fn to_integral(self) -> Self::StorageType;
 	/// Return true if this entity is index 0
 	fn is_null(self) -> bool;
 	//	fn id(self) -> Self::StorageType;
@@ -41,13 +36,6 @@ pub trait Entity: PartialEq + Copy + Ord {
 	fn version(self) -> Self::VersionType;
 	/// Sets the index as well as increments the version in a single call
 	fn bump_version_with_idx(&mut self, idx: usize);
-	//	fn new_next_version(self) -> Self;
-	//	fn set_version(&mut self, version: Self::StorageType) {
-	//		*self = self.new_version(version);
-	//	}
-	//	fn next_version(&mut self) {
-	//		*self = self.new_next_version()
-	//	}
 }
 
 #[macro_export]
@@ -100,7 +88,7 @@ macro_rules! unsigned_integral_entity {
 ///
 /// ```
 /// # use enrs::{delegate_wrapped_entity, entity::Entity};
-/// #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+/// #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 /// struct Wrapper(u32);
 /// delegate_wrapped_entity!(Wrapper, u32);
 /// let mut e = Wrapper::new(42);

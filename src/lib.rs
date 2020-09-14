@@ -1,12 +1,15 @@
 pub use frunk;
 
+pub mod aspects;
 pub mod entity;
 pub mod registry;
 pub mod storages;
+pub mod utils;
 
 mod entity_instances {
 	pub use crate as enrs;
 	use crate::unsigned_integral_entity;
+
 	unsigned_integral_entity!(
 		u16,
 		u8,

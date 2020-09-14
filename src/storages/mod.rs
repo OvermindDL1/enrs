@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 
 use crate::frunk::{prelude::HList, HCons, HNil};
 
+pub mod secondary_index;
+pub mod sparse_typed_paged_map;
 pub mod typed_index_map;
 
 pub struct TypeListIterExactTypes<C: TypeList>(usize, PhantomData<C>);
@@ -32,6 +34,16 @@ pub trait TypeList: 'static + HList {
 	/// TODO: This `LENGTH` is to work around:  https://github.com/rust-lang/rust/issues/75961
 	/// TODO: Remove this and just call HList's `LEN` when it's fixed...
 	type LenTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
+
+	/// Tests if this TypeList contains the passed in TypeId.
+	///
+	/// ```rust
+	/// # use enrs::{frunk::{*, prelude::*}, storages::*};
+	/// assert_eq!(<Hlist![]>::contains_type_id(std::any::TypeId::of::<usize>()), false);
+	/// assert_eq!(<Hlist![usize]>::contains_type_id(std::any::TypeId::of::<usize>()), true);
+	/// assert_eq!(<Hlist![i32, usize, i64]>::contains_type_id(std::any::TypeId::of::<usize>()), true);
+	/// ```
+	fn contains_type_id(tid: TypeId) -> bool;
 
 	/// Get the TypeId at a given index in this HList.
 	///
@@ -74,7 +86,11 @@ pub trait TypeList: 'static + HList {
 impl TypeList for HNil {
 	type LenTN = generic_array::typenum::U0;
 	#[inline]
-	fn get_type_id_at(idx: usize) -> Option<TypeId> {
+	fn contains_type_id(_tid: TypeId) -> bool {
+		false
+	}
+	#[inline]
+	fn get_type_id_at(_idx: usize) -> Option<TypeId> {
 		None
 	}
 	#[inline]
@@ -95,6 +111,11 @@ where
 		generic_array::ArrayLength<std::any::TypeId>,
 {
 	type LenTN = generic_array::typenum::Add1<T::LenTN>;
+
+	#[inline]
+	fn contains_type_id(tid: TypeId) -> bool {
+		tid == std::any::TypeId::of::<H>() || T::contains_type_id(tid)
+	}
 
 	#[inline]
 	fn get_type_id_at(idx: usize) -> Option<TypeId> {

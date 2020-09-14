@@ -15,11 +15,11 @@ impl<EntityType: Entity> Registry<EntityType> {
 
 #[cfg(test)]
 mod tests {
-	use super::*;
+	//use super::*;
 
 	#[test]
 	fn create_static_components() {
-		let mut registry = Registry::<u32>::new();
+		// let mut registry = Registry::<u32>::new();
 		// let _ = registry.create::<()>();
 		// let _ = registry.create::<(usize, ())>();
 	}
