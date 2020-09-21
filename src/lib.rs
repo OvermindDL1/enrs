@@ -1,6 +1,5 @@
 pub use frunk;
 
-pub mod aspects;
 pub mod entity;
 pub mod registry;
 pub mod storages;

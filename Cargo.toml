@@ -10,6 +10,9 @@ indexmap = "1.5" # Convenient implementation of an indexmap
 rayon = "1.4" # Handles multi-threading
 frunk = "0.3.1" # REMOVEABLE: Using this is easier than making my own for now, hopefully removed with variadic tuples in Rust later
 generic-array = "0.14.4" # REMOVEABLE: Because no const generics yet, remove this when those become stable
+# reffers = "0.6.0" # REMOVEABLE: Because no GAT's in stable rust yet
+owning_ref = "0.4.1" # REMOVEABLE: Because no GAT's in stable rust yet
+tinyvec = { version = "1.0", features = ["alloc"] } # Used for group iterating so far
 
 [features]
 default = []
