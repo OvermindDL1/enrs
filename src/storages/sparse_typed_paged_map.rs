@@ -14,7 +14,9 @@ use crate::utils::unique_hasher::UniqueHasherBuilder;
 use generic_array::typenum::Unsigned;
 use generic_array::GenericArray;
 use std::cell::{Ref, RefCell, RefMut};
-use std::rc::{Rc, Weak};
+use std::collections::hash_map::RandomState;
+use std::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::PoisonError;
 
 /// Possible Errors given by a SparsePageMap's operation.
@@ -24,6 +26,7 @@ pub enum SparseTypedPagedMapErrors<EntityType: Entity> {
 	SecondaryIndexError(SecondaryIndexErrors<EntityType>),
 	ComponentStorageDoesNotExist(&'static str),
 	EntityDoesNotExistInStorage(EntityType, &'static str),
+	EntityGenerationMismatch(EntityType, EntityType),
 	IteratorsNotAllSameLength,
 }
 
@@ -35,6 +38,7 @@ impl<EntityType: Entity> std::error::Error for SparseTypedPagedMapErrors<EntityT
 			SecondaryIndexError(source) => Some(source),
 			ComponentStorageDoesNotExist(_name) => None,
 			EntityDoesNotExistInStorage(_entity, _name) => None,
+			EntityGenerationMismatch(_requested_entity, _existing_entity) => None,
 			IteratorsNotAllSameLength => None,
 		}
 	}
@@ -53,6 +57,11 @@ impl<EntityType: Entity> std::fmt::Display for SparseTypedPagedMapErrors<EntityT
 				f,
 				"Entity `{:?}` does not exist in component static storage: {}",
 				entity, name
+			),
+			EntityGenerationMismatch(requested_entity, existing_entity) => write!(
+				f,
+				"Requested Entity of `{:?}` does not match the internal Entity of `{:?}`",
+				requested_entity, existing_entity
 			),
 			IteratorsNotAllSameLength => write!(
 				f,
@@ -86,7 +95,7 @@ pub trait DensePagedData: private::Sealed + 'static {
 	fn len_groups(&self) -> usize;
 	fn resize(&self, new_len: usize);
 	fn truncate_group(&self, group: usize, len: usize);
-	fn swap_remove(&self, group: usize, index: u8);
+	fn swap_remove(&self, group: usize, index: usize);
 }
 
 impl dyn DensePagedData {
@@ -110,24 +119,24 @@ impl dyn DensePagedData {
 			.clone()
 	}
 
-	fn get_weak<DataType: 'static>(&self) -> Weak<DensePagedDataActual<DataType>> {
-		// Rc::downgrade(
-		// 	&self
-		// 		.as_any()
-		// 		.downcast_ref::<DensePagedDataInstance<DataType>>()
-		// 		.expect("Type mismatch in map!  Shouldn't happen!")
-		// 		.0,
-		// )
-		todo!()
-	}
+	// fn get_weak<DataType: 'static>(&self) -> Weak<DensePagedDataActual<DataType>> {
+	// 	// Rc::downgrade(
+	// 	// 	&self
+	// 	// 		.as_any()
+	// 	// 		.downcast_ref::<DensePagedDataInstance<DataType>>()
+	// 	// 		.expect("Type mismatch in map!  Shouldn't happen!")
+	// 	// 		.0,
+	// 	// )
+	// 	todo!()
+	// }
 
-	fn get_ref<DataType: 'static>(&self) -> Ref<DensePagedDataActual<DataType>> {
-		self.as_any()
-			.downcast_ref::<DensePagedDataInstance<DataType>>()
-			.expect("Type mismatch in map!  Shouldn't happen!")
-			.0
-			.borrow()
-	}
+	// fn get_ref<DataType: 'static>(&self) -> Ref<DensePagedDataActual<DataType>> {
+	// 	self.as_any()
+	// 		.downcast_ref::<DensePagedDataInstance<DataType>>()
+	// 		.expect("Type mismatch in map!  Shouldn't happen!")
+	// 		.0
+	// 		.borrow()
+	// }
 
 	fn get_refmut<DataType: 'static>(&self) -> RefMut<DensePagedDataActual<DataType>> {
 		self.as_any()
@@ -235,8 +244,8 @@ impl<DataType: 'static> DensePagedData for DensePagedDataInstance<DataType> {
 		self.0.borrow_mut().data[group].truncate(len);
 	}
 	#[inline]
-	fn swap_remove(&self, group: usize, index: u8) {
-		self.0.borrow_mut().data[group].swap_remove(index as usize);
+	fn swap_remove(&self, group: usize, index: usize) {
+		self.0.borrow_mut().data[group].swap_remove(index);
 	}
 }
 
@@ -331,9 +340,9 @@ impl ComponentLocations {
 		index: usize::MAX,
 	};
 
-	fn new(group: usize, index: usize) -> Self {
-		Self { group, index }
-	}
+	// fn new(group: usize, index: usize) -> Self {
+	// 	Self { group, index }
+	// }
 }
 
 #[derive(PartialEq, Eq)]
@@ -409,8 +418,8 @@ impl<'a> indexmap::Equivalent<QueryTypedPagedKeyBoxed> for QueryTypedPagedKey<'a
 
 /// These are the indexes to the `group_sets_to_maps`
 struct QueryTypedPagedLink {
-	include_groups: Vec<usize>,
-	exclude_groups: Vec<usize>,
+	include_groups: Rc<RefCell<Vec<usize>>>,
+	//exclude_groups: Vec<usize>,
 	include_maps: Vec<usize>, // read_only_groups: Vec<usize>,
 	                          // read_write_groups: Vec<usize>,
 	                          // except_groups: Vec<usize>,
@@ -422,7 +431,7 @@ type MapIndexMap = IndexMap<TypeId, Box<dyn DensePagedData>, UniqueHasherBuilder
 
 pub struct SparseTypedPagedMap<EntityType: Entity> {
 	reverse: Rc<RefCell<SecondaryIndex<EntityType, ComponentLocations>>>,
-	entities: Vec<Vec<EntityType>>,
+	entities: Rc<RefCell<Vec<Vec<EntityType>>>>,
 	maps: Rc<RefCell<MapIndexMap>>,
 	group_sets_to_maps: IndexMap<Vec<TypeId>, Vec<usize>>,
 	query_mappings: Rc<RefCell<IndexMap<QueryTypedPagedKeyBoxed, QueryTypedPagedLink>>>,
@@ -449,7 +458,7 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 			if query.include.iter().all(|tid| types.contains(tid))
 				&& query.exclude.iter().all(|tid| !types.contains(tid))
 			{
-				link.include_groups.push(group);
+				link.include_groups.borrow_mut().push(group);
 			}
 		}
 	}
@@ -460,7 +469,7 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 			reverse: Rc::new(RefCell::new(SecondaryIndex::new(
 				ComponentLocations::INVALID,
 			))),
-			entities: Default::default(),
+			entities: Rc::new(RefCell::new(Default::default())),
 			maps: Rc::new(RefCell::new(IndexMap::with_hasher(UniqueHasherBuilder))),
 			group_sets_to_maps: Default::default(),
 			query_mappings: Default::default(),
@@ -468,19 +477,105 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 	}
 
 	pub fn contains(&self, entity: EntityType) -> bool {
-		self.reverse.borrow().get(entity).is_ok()
+		Self::get_valid_location(&*self.reverse.borrow(), &*self.entities.borrow(), entity).is_ok()
 	}
 
-	pub fn insert<C: ComponentSet>(
+	fn insert_valid_location_mut<'a>(
+		reverse: &'a mut SecondaryIndex<EntityType, ComponentLocations>,
+		entities: &mut Vec<Vec<EntityType>>,
+		entity: EntityType,
+		group: usize,
+	) -> Result<&'a mut ComponentLocations, SparseTypedPagedMapErrors<EntityType>> {
+		let location = reverse.insert_mut(entity)?;
+		location.group = group;
+		// This should already be in sync so no resizing ever needed
+		// if entities.len() <= location.group {
+		// 	entities.resize(location.group, vec![]);
+		// }
+		let entities_group = &mut entities[group];
+		location.index = entities_group.len();
+		entities_group.push(entity);
+		Ok(location)
+	}
+
+	fn get_valid_location<'a>(
+		reverse: &'a SecondaryIndex<EntityType, ComponentLocations>,
+		entities: &Vec<Vec<EntityType>>,
+		entity: EntityType,
+	) -> Result<&'a ComponentLocations, SparseTypedPagedMapErrors<EntityType>> {
+		let location = reverse.get(entity)?;
+		if entities[location.group][location.index] != entity {
+			return Err(SparseTypedPagedMapErrors::EntityGenerationMismatch(
+				entity,
+				entities[location.group][location.index],
+			));
+		}
+		Ok(location)
+	}
+
+	// fn get_valid_location_mut<'a>(
+	// 	reverse: &'a mut SecondaryIndex<EntityType, ComponentLocations>,
+	// 	entities: &Vec<Vec<EntityType>>,
+	// 	entity: EntityType,
+	// ) -> Result<&'a mut ComponentLocations, SparseTypedPagedMapErrors<EntityType>> {
+	// 	let location = reverse.get_mut(entity)?;
+	// 	if entities[location.group][location.index] != entity {
+	// 		return Err(SparseTypedPagedMapErrors::EntityGenerationMismatch(
+	// 			entity,
+	// 			entities[location.group][location.index],
+	// 		));
+	// 	}
+	// 	Ok(location)
+	// }
+
+	fn remove_valid_location(
+		reverse: &mut SecondaryIndex<EntityType, ComponentLocations>,
+		entities: &mut Vec<Vec<EntityType>>,
+		entity: EntityType,
+	) -> Result<ComponentLocations, SparseTypedPagedMapErrors<EntityType>> {
+		let location = reverse.get_mut(entity)?;
+		let entities_group = &mut entities[location.group];
+		if entities_group[location.index] != entity {
+			return Err(SparseTypedPagedMapErrors::EntityGenerationMismatch(
+				entity,
+				entities[location.group][location.index],
+			));
+		}
+		let loc = *location;
+		*location = ComponentLocations::INVALID;
+		entities_group.swap_remove(loc.index);
+		if entities_group.len() > 0 {
+			let replacement_entity = entities_group[loc.index];
+			reverse
+				.get_mut(replacement_entity)
+				.expect("SecondaryIndex is in invalid state")
+				.index = loc.index;
+		}
+		Ok(loc)
+	}
+
+	pub fn remove(
 		&mut self,
 		entity: EntityType,
-		components: C,
 	) -> Result<(), SparseTypedPagedMapErrors<EntityType>> {
-		let mut reverse = self.reverse.borrow_mut();
-		let location = reverse.insert_mut(entity)?;
-		let mut cset: generic_array::GenericArray<TypeId, C::LenTN> =
-			generic_array::GenericArray::from_exact_iter(C::iter_types()).unwrap();
-		C::populate_type_slice(cset.as_mut_slice());
+		let location = Self::remove_valid_location(
+			&mut *self.reverse.borrow_mut(),
+			&mut *self.entities.borrow_mut(),
+			entity,
+		)?;
+		let mut maps = self.maps.borrow_mut();
+		for map in maps.values_mut() {
+			map.swap_remove(location.group, location.index);
+		}
+		Ok(())
+	}
+
+	pub fn insert<CT: ComponentTuple<EntityType>>(
+		&mut self,
+		entity: EntityType,
+		components: CT,
+	) -> Result<(), SparseTypedPagedMapErrors<EntityType>> {
+		let cset: generic_array::GenericArray<TypeId, CT::LenTN> = CT::get_tids();
 		let mut maps = self.maps.borrow_mut();
 		let prior_group_size = self.group_sets_to_maps.len();
 		let (group, map_idxs) = if let Some((group, _key, map_idxs)) =
@@ -489,8 +584,8 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 			(group, map_idxs)
 		} else {
 			self.group_sets_to_maps
-				.insert(cset.to_vec(), C::into_type_idx_vec(&mut *maps));
-			self.entities.push(Vec::with_capacity(1));
+				.insert(cset.to_vec(), CT::into_type_idx_vec(&mut *maps));
+			self.entities.borrow_mut().push(Vec::with_capacity(1));
 			let group = self.group_sets_to_maps.len() - 1;
 			Self::update_query_mappings(
 				&self.group_sets_to_maps,
@@ -504,20 +599,23 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 				map.resize(group + 1);
 			}
 		}
-		*location = components.insert(&mut *maps, map_idxs, group);
-		self.entities[group].push(entity);
+		Self::insert_valid_location_mut(
+			&mut *self.reverse.borrow_mut(),
+			&mut *self.entities.borrow_mut(),
+			entity,
+			group,
+		)?;
+		components.insert(&mut *maps, map_idxs, group);
 		Ok(())
 	}
 
-	pub fn extend_iter<C: ComponentSet, I: IntoIterator<Item = (EntityType, C)>>(
+	pub fn extend_iter<CT: ComponentTuple<EntityType>, I: IntoIterator<Item = (EntityType, CT)>>(
 		&mut self,
 		iter: I,
 	) -> Result<(), SparseTypedPagedMapErrors<EntityType>> {
 		let mut iter = iter.into_iter();
 		if let Some((entity, components)) = iter.next() {
-			let mut cset: generic_array::GenericArray<TypeId, C::LenTN> =
-				generic_array::GenericArray::from_exact_iter(C::iter_types()).unwrap();
-			C::populate_type_slice(cset.as_mut_slice());
+			let cset: generic_array::GenericArray<TypeId, CT::LenTN> = CT::get_tids();
 			let mut maps = self.maps.borrow_mut();
 			let prior_group_size = self.group_sets_to_maps.len();
 			let (group, map_idxs) = if let Some((group, _key, map_idxs)) =
@@ -526,8 +624,10 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 				(group, map_idxs)
 			} else {
 				self.group_sets_to_maps
-					.insert(cset.to_vec(), C::into_type_idx_vec(&mut *maps));
-				self.entities.push(Vec::with_capacity(iter.size_hint().0));
+					.insert(cset.to_vec(), CT::into_type_idx_vec(&mut *maps));
+				self.entities
+					.borrow_mut()
+					.push(Vec::with_capacity(iter.size_hint().0));
 				let group = self.group_sets_to_maps.len() - 1;
 				Self::update_query_mappings(
 					&self.group_sets_to_maps,
@@ -541,14 +641,14 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 					map.resize(group + 1);
 				}
 			}
+			let mut storage_groups = CT::get_storages_group_mut(&*maps, map_idxs, group);
 			let mut reverse = self.reverse.borrow_mut();
-			let location = reverse.insert_mut(entity)?;
-			*location = components.insert(&mut *maps, map_idxs, group);
-			self.entities[group].push(entity);
+			let mut entities = self.entities.borrow_mut();
+			Self::insert_valid_location_mut(&mut *reverse, &mut *entities, entity, group)?;
+			components.insert_in_group(&mut storage_groups);
 			for (entity, components) in iter {
-				let location = reverse.insert_mut(entity)?;
-				*location = components.insert(&mut *maps, map_idxs, group);
-				self.entities[group].push(entity);
+				Self::insert_valid_location_mut(&mut *reverse, &mut *entities, entity, group)?;
+				components.insert_in_group(&mut storage_groups);
 			}
 			Ok(())
 		} else {
@@ -559,7 +659,7 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 
 	pub fn extend_iters<C: ComponentSliceSet, EI: ExactSizeIterator<Item = EntityType>>(
 		&mut self,
-		entities: EI,
+		entity_iter: EI,
 		component_slices: C,
 	) -> Result<(), SparseTypedPagedMapErrors<EntityType>> {
 		let mut cset: generic_array::GenericArray<TypeId, C::LenTN> =
@@ -567,9 +667,10 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 		C::populate_type_slice(cset.as_mut_slice());
 		let mut maps = self.maps.borrow_mut();
 		let prior_group_size = self.group_sets_to_maps.len();
-		if !component_slices.all_same_len(entities.len()) {
+		if !component_slices.all_same_len(entity_iter.len()) {
 			return Err(SparseTypedPagedMapErrors::IteratorsNotAllSameLength);
 		}
+		let mut entities = self.entities.borrow_mut();
 		let (group, map_idxs) = if let Some((group, _key, map_idxs)) =
 			self.group_sets_to_maps.get_full(cset.as_slice())
 		{
@@ -579,7 +680,8 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 				cset.to_vec(),
 				component_slices.into_type_idx_vec(&mut *maps),
 			);
-			self.entities.push(Vec::with_capacity(entities.len()));
+			let len = entities.len();
+			entities.push(Vec::with_capacity(len));
 			let group = self.group_sets_to_maps.len() - 1;
 			Self::update_query_mappings(
 				&self.group_sets_to_maps,
@@ -593,16 +695,17 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 				map.resize(group + 1);
 			}
 		}
-		let group_size = self.entities[group].len();
-		let mut start_idx = component_slices.insert_all(&mut *maps, map_idxs, group);
+		let group_size = entities[group].len();
+		// let mut start_idx = component_slices.insert_all(&mut *maps, map_idxs, group);
+		component_slices.insert_all(&mut *maps, map_idxs, group);
 		let mut reverse = self.reverse.borrow_mut();
-		for entity in entities {
-			match reverse.insert_mut(entity) {
-				Ok(location) => {
-					location.group = group;
-					location.index = start_idx;
-					start_idx += 1;
-					self.entities[group].push(entity);
+		for entity in entity_iter {
+			match Self::insert_valid_location_mut(&mut *reverse, &mut *entities, entity, group) {
+				Ok(_location) => {
+					//location.group = group;
+					//location.index = start_idx;
+					//start_idx += 1;
+					//self.entities[group].push(entity);
 				}
 				Err(error) => {
 					// Truncate only after the error
@@ -610,9 +713,17 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 					// -- OR --
 					// Truncate all that was passed in
 					C::truncate(&mut *maps, map_idxs, group, group_size);
-					reverse.remove_iter(self.entities[group].drain(group_size..));
+					let to_clear: Vec<_> = entities[group].drain(group_size..).collect();
+					for entity in to_clear {
+						// unwrap should not fail as we just added these
+						*reverse.get_mut(entity).unwrap() = ComponentLocations::INVALID;
+						// Don't need to remove valid entities via locations because we already did via the drain above
+						// let _ =
+						// 	Self::remove_valid_location(&mut *reverse, &mut self.entities, entity);
+					}
+					//reverse.remove_iter(self.entities[group].drain(group_size..));
 					// Truncate choice end
-					return Err(error.into());
+					return Err(error);
 				}
 			}
 		}
@@ -691,10 +802,10 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 	// 					&self.group_sets_to_maps,
 	// 					&include_tids,
 	// 				),
-	// 				exclude_groups: CT::get_exclude_matching_query_groups(
-	// 					&self.group_sets_to_maps,
-	// 					&exclude_tids,
-	// 				),
+	// 				// exclude_groups: CT::get_exclude_matching_query_groups(
+	// 				// 	&self.group_sets_to_maps,
+	// 				// 	&exclude_tids,
+	// 				// ),
 	// 				include_maps: CT::get_map_idxs(&self.maps, &include_tids),
 	// 			})
 	// 	};
@@ -721,7 +832,7 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 	// 	// todo!();
 	// }
 
-	pub fn query<CT: ComponentTupleQuery>(
+	pub fn query<CT: ComponentTupleQuery<EntityType>>(
 		&self,
 	) -> Result<ComponentPagedQuery<EntityType, CT>, SparseTypedPagedMapErrors<EntityType>> {
 		let include_tids: generic_array::GenericArray<TypeId, CT::LenIncludeTN> =
@@ -737,21 +848,21 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 			query_mappings
 				.entry(query_key.to_box())
 				.or_insert_with(|| QueryTypedPagedLink {
-					include_groups: CT::get_include_matching_query_groups(
+					include_groups: Rc::new(RefCell::new(CT::get_include_matching_query_groups(
 						&self.group_sets_to_maps,
 						&include_tids,
-					),
-					exclude_groups: CT::get_exclude_matching_query_groups(
-						&self.group_sets_to_maps,
-						&exclude_tids,
-					),
-					include_maps: CT::get_map_idxs(&mut *self.maps.borrow_mut(), &include_tids),
+					))),
+					// exclude_groups: CT::get_exclude_matching_query_groups(
+					// 	&self.group_sets_to_maps,
+					// 	&exclude_tids,
+					// ),
+					include_maps: CT::get_map_idxs(&mut *self.maps.borrow_mut()),
 				})
 		};
 		Ok(ComponentPagedQuery {
 			reverse: self.reverse.clone(),
-			storages: CT::get_storages(&*self.maps.borrow(), &link.include_maps),
-			groups: link.include_groups.iter().copied().collect(),
+			storages: CT::get_storages(&self.entities, &*self.maps.borrow(), &link.include_maps),
+			groups: link.include_groups.clone(),
 		})
 	}
 	/*
@@ -805,10 +916,10 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 						&self.group_sets_to_maps,
 						vec![],
 					),
-					exclude_groups: CS::get_exclude_matching_query_groups(
-						&self.group_sets_to_maps,
-						vec![],
-					),
+					// exclude_groups: CS::get_exclude_matching_query_groups(
+					// 	&self.group_sets_to_maps,
+					// 	vec![],
+					// ),
 					include_maps: CS::get_map_idxs(&self.maps, vec![]),
 				};
 				query_mappings.insert(query_key.to_box(), query_link);
@@ -876,13 +987,13 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 	// }
 }
 
-pub struct ComponentPagedQuery<EntityType: Entity, CT: ComponentTupleQuery> {
+pub struct ComponentPagedQuery<EntityType: Entity, CT: ComponentTupleQuery<EntityType>> {
 	reverse: Rc<RefCell<SecondaryIndex<EntityType, ComponentLocations>>>,
 	storages: CT::Storages,
-	groups: tinyvec::TinyVec<[usize; 16]>,
+	groups: Rc<RefCell<Vec<usize>>>,
 }
 
-impl<EntityType: Entity, CT: ComponentTupleQuery> ComponentPagedQuery<EntityType, CT> {
+impl<EntityType: Entity, CT: ComponentTupleQuery<EntityType>> ComponentPagedQuery<EntityType, CT> {
 	pub fn get(&mut self, entity: EntityType) -> Option<CT::StorageValues> {
 		if let Ok(location) = self.reverse.borrow().get(entity) {
 			CT::get_storage_values_at(&self.storages, location.group, location.index)
@@ -890,45 +1001,92 @@ impl<EntityType: Entity, CT: ComponentTupleQuery> ComponentPagedQuery<EntityType
 			None
 		}
 	}
-}
 
-impl<EntityType: Entity, CT: ComponentTupleQuery> IntoIterator
-	for ComponentPagedQuery<EntityType, CT>
-{
-	type Item = CT::StorageSlices;
-	type IntoIter = ComponentPagedIterator<EntityType, CT>;
-
-	fn into_iter(self) -> Self::IntoIter {
+	pub fn iter_slices(&self) -> ComponentPagedIterator<EntityType, CT> {
 		ComponentPagedIterator {
-			reverse: self.reverse.clone(),
-			storages: self.storages,
-			groups: self.groups,
+			_phantom: PhantomData,
+			//reverse: self.reverse.clone(),
+			storages: self.storages.clone(),
+			groups: self.groups.borrow().iter().copied().collect(),
 		}
 	}
+
+	// pub fn iter(&self) -> ComponentPagedFlatIterator<EntityType, CT> {
+	// 	ComponentPagedFlatIterator {
+	// 		// _phantom: PhantomData,
+	// 		//reverse: self.reverse.clone(),
+	// 		// storages: self.storages.clone(),
+	// 		iter: self.iter_slices(),
+	// 		slices: None,
+	// 		// groups: self.groups.borrow().iter().copied().collect(),
+	// 	}
+	// }
 }
 
-pub struct ComponentPagedIterator<EntityType: Entity, CT: ComponentTupleQuery> {
-	reverse: Rc<RefCell<SecondaryIndex<EntityType, ComponentLocations>>>,
+// impl<EntityType: Entity, CT: ComponentTupleQuery> IntoIterator
+// 	for ComponentPagedQuery<EntityType, CT>
+// {
+// 	type Item = CT::StorageSlices;
+// 	type IntoIter = ComponentPagedIterator<EntityType, CT>;
+//
+// 	fn into_iter(self) -> Self::IntoIter {
+// 		ComponentPagedIterator {
+// 			_phantom: PhantomData,
+// 			//reverse: self.reverse.clone(),
+// 			storages: self.storages,
+// 			groups: self.groups.borrow().iter().copied().collect(),
+// 		}
+// 	}
+// }
+
+// pub struct ComponentPagedFlatIterator<EntityType: Entity, CT: ComponentTupleQuery> {
+// 	iter: ComponentPagedIterator<EntityType, CT>,
+// 	slices: CT::StorageSlices,
+// }
+//
+// impl<EntityType: Entity, CT: ComponentTupleQuery> Iterator
+// 	for ComponentPagedFlatIterator<EntityType, CT>
+// {
+// 	type Item = CT::StorageValues;
+//
+// 	fn next(&mut self) -> Option<Self::Item> {
+// 		loop {
+// 			if let Some(next) = CT::get_next_values_from_slices(&mut self.slices) {
+// 				return Some(next);
+// 			}
+// 			if let Some(slices) = self.iter.next() {
+// 				self.slices = slices;
+// 			} else {
+// 				return None;
+// 			}
+// 		}
+// 	}
+// }
+
+pub struct ComponentPagedIterator<EntityType: Entity, CT: ComponentTupleQuery<EntityType>> {
+	_phantom: PhantomData<EntityType>,
+	//reverse: Rc<RefCell<SecondaryIndex<EntityType, ComponentLocations>>>,
 	storages: CT::Storages,
 	groups: tinyvec::TinyVec<[usize; 16]>,
 }
 
-impl<EntityType: Entity, CT: ComponentTupleQuery> Iterator
+impl<EntityType: Entity, CT: ComponentTupleQuery<EntityType>> Iterator
 	for ComponentPagedIterator<EntityType, CT>
 {
 	type Item = CT::StorageSlices;
 
 	fn next(&mut self) -> Option<Self::Item> {
-		if let Some(group) = self.groups.pop() {
+		while let Some(group) = self.groups.pop() {
 			let next = CT::get_storage_slices_at(&self.storages, group);
-			Some(next)
-		} else {
-			None
+			if next.is_some() {
+				return next;
+			}
 		}
+		None
 	}
 }
 
-pub trait ComponentQuery {
+pub trait ComponentQuery<EntityType> {
 	type RawType: 'static;
 	type LenIncludeTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
 	type LenExcludeTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
@@ -942,10 +1100,14 @@ pub trait ComponentQuery {
 		groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
 		out: &mut Vec<usize>,
 	);
-	type Storage;
-	fn get_storage(maps: &MapIndexMap, map_id: usize) -> Self::Storage;
+	type Storage: Clone;
+	fn get_storage(
+		entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage;
 	type StorageSlice;
-	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Self::StorageSlice; //(Self::Storage, Self::StorageSlice);
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice>; //(Self::Storage, Self::StorageSlice);
 	type StorageValue;
 	fn get_storage_value_at(
 		storage: &Self::Storage,
@@ -954,7 +1116,76 @@ pub trait ComponentQuery {
 	) -> Option<Self::StorageValue>;
 }
 
-impl<T: 'static> ComponentQuery for &T {
+pub struct EntityRef;
+
+impl<EntityType: Entity> ComponentQuery<EntityType> for EntityRef {
+	type RawType = EntityType;
+	type LenIncludeTN = generic_array::typenum::U0;
+	type LenExcludeTN = generic_array::typenum::U0;
+	#[inline(always)]
+	fn get_include_tid() -> Option<TypeId> {
+		None
+	}
+	#[inline(always)]
+	fn get_exclude_tid() -> Option<TypeId> {
+		None
+	}
+	#[inline(always)]
+	fn push_matching_include_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>, RandomState>,
+		_out: &mut Vec<usize>,
+	) {
+	}
+	#[inline(always)]
+	fn push_matching_exclude_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>, RandomState>,
+		_out: &mut Vec<usize>,
+	) {
+	}
+
+	type Storage = Rc<RefCell<Vec<Vec<EntityType>>>>;
+	#[inline(always)]
+	fn get_storage(
+		entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		_maps: &MapIndexMap,
+		_map_id: usize,
+	) -> Self::Storage {
+		entities.clone()
+	}
+
+	type StorageSlice = OwningRef<
+		OwningHandle<Rc<RefCell<Vec<Vec<EntityType>>>>, Ref<'static, Vec<Vec<EntityType>>>>,
+		[Self::RawType],
+	>;
+	#[inline(always)]
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
+		let owned = OwningHandle::new(storage.clone());
+		OwningRef::new(owned)
+			.try_map(|s| match s[group].as_slice() {
+				&[] => Err(()),
+				slice => Ok(slice),
+			})
+			.ok()
+	}
+
+	type StorageValue = Self::RawType;
+	#[inline(always)]
+	fn get_storage_value_at(
+		storage: &Self::Storage,
+		group: usize,
+		index: usize,
+	) -> Option<Self::StorageValue> {
+		let storage = storage.borrow();
+		let group = &storage[group];
+		if group.len() > index {
+			Some(group[index])
+		} else {
+			None
+		}
+	}
+}
+
+impl<EntityType: Entity, T: 'static> ComponentQuery<EntityType> for &T {
 	type RawType = T;
 	type LenIncludeTN = generic_array::typenum::U1;
 	type LenExcludeTN = generic_array::typenum::U0;
@@ -979,9 +1210,14 @@ impl<T: 'static> ComponentQuery for &T {
 	) {
 		// Do nothing as this is not an exclude
 	}
+
 	type Storage = Rc<RefCell<DensePagedDataActual<Self::RawType>>>;
 	#[inline]
-	fn get_storage(maps: &MapIndexMap, map_id: usize) -> Self::Storage {
+	fn get_storage(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage {
 		maps.get_index(map_id)
 			.unwrap()
 			.1
@@ -996,9 +1232,14 @@ impl<T: 'static> ComponentQuery for &T {
 		[Self::RawType],
 	>;
 	#[inline]
-	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Self::StorageSlice {
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
 		let owned = OwningHandle::new(storage.clone());
-		OwningRef::new(owned).map(|s| s.data[group].as_slice())
+		OwningRef::new(owned)
+			.try_map(|s| match s.data[group].as_slice() {
+				&[] => Err(()),
+				slice => Ok(slice),
+			})
+			.ok()
 	}
 
 	type StorageValue = OwningRef<
@@ -1018,7 +1259,7 @@ impl<T: 'static> ComponentQuery for &T {
 		OwningRef::new(owned)
 			.try_map(|s| {
 				let slice = &s.data[group];
-				if slice.len() >= index {
+				if slice.len() > index {
 					Ok(&slice[index])
 				} else {
 					Err(())
@@ -1028,7 +1269,167 @@ impl<T: 'static> ComponentQuery for &T {
 	}
 }
 
-impl<T: 'static> ComponentQuery for &mut T {
+pub struct Exclude<T: 'static> {
+	_phantom: PhantomData<T>,
+}
+
+impl<EntityType: Entity, T: 'static> ComponentQuery<EntityType> for Exclude<T> {
+	type RawType = T;
+	type LenIncludeTN = generic_array::typenum::U0;
+	type LenExcludeTN = generic_array::typenum::U1;
+	#[inline(always)]
+	fn get_include_tid() -> Option<std::any::TypeId> {
+		None // Do nothing as this is an exclude
+	}
+	#[inline(always)]
+	fn get_exclude_tid() -> Option<std::any::TypeId> {
+		Some(std::any::TypeId::of::<T>())
+	}
+	#[inline]
+	fn push_matching_include_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+		// Do nothing as this is not an exclude
+	}
+	#[inline]
+	fn push_matching_exclude_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+	}
+
+	type Storage = Rc<RefCell<DensePagedDataActual<Self::RawType>>>;
+	#[inline]
+	fn get_storage(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage {
+		maps.get_index(map_id)
+			.unwrap()
+			.1
+			.get_strong::<Self::RawType>()
+	}
+
+	type StorageSlice = ();
+	#[inline]
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
+		if storage.borrow().data[group].is_empty() {
+			Some(())
+		} else {
+			None
+		}
+	}
+
+	type StorageValue = ();
+	#[inline]
+	fn get_storage_value_at(
+		storage: &Self::Storage,
+		group: usize,
+		_index: usize,
+	) -> Option<Self::StorageValue> {
+		if storage.borrow().data[group].is_empty() {
+			Some(())
+		} else {
+			None
+		}
+	}
+}
+
+impl<EntityType: Entity, T: 'static> ComponentQuery<EntityType> for Option<&T> {
+	type RawType = T;
+	type LenIncludeTN = generic_array::typenum::U0;
+	type LenExcludeTN = generic_array::typenum::U0;
+	#[inline(always)]
+	fn get_include_tid() -> Option<std::any::TypeId> {
+		//Some(std::any::TypeId::of::<T>())
+		None
+	}
+	#[inline(always)]
+	fn get_exclude_tid() -> Option<std::any::TypeId> {
+		None // Do nothing as this is not an exclude
+	}
+	#[inline]
+	fn push_matching_include_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+	}
+	#[inline]
+	fn push_matching_exclude_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+		// Do nothing as this is not an exclude
+	}
+	type Storage = Rc<RefCell<DensePagedDataActual<Self::RawType>>>;
+	#[inline]
+	fn get_storage(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage {
+		maps.get_index(map_id)
+			.unwrap()
+			.1
+			.get_strong::<Self::RawType>()
+	}
+
+	type StorageSlice = Option<
+		OwningRef<
+			OwningHandle<
+				Rc<RefCell<DensePagedDataActual<Self::RawType>>>,
+				Ref<'static, DensePagedDataActual<Self::RawType>>,
+			>,
+			[Self::RawType],
+		>,
+	>;
+	#[inline]
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
+		let owned = OwningHandle::new(storage.clone());
+		OwningRef::new(owned)
+			.try_map(|s| {
+				let slice = s.data[group].as_slice();
+				if slice.len() > 0 {
+					Ok(slice)
+				} else {
+					Err(())
+				}
+			})
+			.map_or(Some(None), |slice| Some(Some(slice)))
+	}
+
+	type StorageValue = Option<
+		OwningRef<
+			OwningHandle<
+				Rc<RefCell<DensePagedDataActual<Self::RawType>>>,
+				Ref<'static, DensePagedDataActual<Self::RawType>>,
+			>,
+			Self::RawType,
+		>,
+	>;
+	#[inline]
+	fn get_storage_value_at(
+		storage: &Self::Storage,
+		group: usize,
+		index: usize,
+	) -> Option<Self::StorageValue> {
+		let owned = OwningHandle::new(storage.clone());
+		OwningRef::new(owned)
+			.try_map(|s| {
+				let slice = &s.data[group];
+				if slice.len() > index {
+					Ok(&slice[index])
+				} else {
+					Err(())
+				}
+			})
+			.map_or(Some(None), |slice| Some(Some(slice)))
+	}
+}
+
+impl<EntityType: Entity, T: 'static> ComponentQuery<EntityType> for &mut T {
 	type RawType = T;
 	type LenIncludeTN = generic_array::typenum::U1;
 	type LenExcludeTN = generic_array::typenum::U0;
@@ -1056,7 +1457,11 @@ impl<T: 'static> ComponentQuery for &mut T {
 	}
 	type Storage = Rc<RefCell<DensePagedDataActual<Self::RawType>>>;
 	#[inline]
-	fn get_storage(maps: &MapIndexMap, map_id: usize) -> Self::Storage {
+	fn get_storage(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage {
 		maps.get_index(map_id)
 			.unwrap()
 			.1
@@ -1071,9 +1476,14 @@ impl<T: 'static> ComponentQuery for &mut T {
 		[Self::RawType],
 	>;
 	#[inline]
-	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Self::StorageSlice {
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
 		let owned = OwningHandle::new_mut(storage.clone());
-		OwningRefMut::new(owned).map_mut(|s| s.data[group].as_mut_slice())
+		OwningRefMut::new(owned)
+			.try_map_mut(|s| match s.data[group].as_mut_slice() {
+				&mut [] => Err(()),
+				slice => Ok(slice),
+			})
+			.ok()
 	}
 
 	type StorageValue = OwningRefMut<
@@ -1093,7 +1503,7 @@ impl<T: 'static> ComponentQuery for &mut T {
 		OwningRefMut::new(owned)
 			.try_map_mut(|s| {
 				let slice = &mut s.data[group];
-				if slice.len() >= index {
+				if slice.len() > index {
 					Ok(&mut slice[index])
 				} else {
 					Err(())
@@ -1103,7 +1513,284 @@ impl<T: 'static> ComponentQuery for &mut T {
 	}
 }
 
-pub trait ComponentTupleQuery {
+impl<EntityType: Entity, T: 'static> ComponentQuery<EntityType> for Option<&mut T> {
+	type RawType = T;
+	type LenIncludeTN = generic_array::typenum::U1;
+	type LenExcludeTN = generic_array::typenum::U0;
+	#[inline(always)]
+	fn get_include_tid() -> Option<std::any::TypeId> {
+		Some(std::any::TypeId::of::<T>())
+	}
+	#[inline(always)]
+	fn get_exclude_tid() -> Option<std::any::TypeId> {
+		None // Do nothing as this is not an exclude
+	}
+	#[inline]
+	fn push_matching_include_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+		todo!();
+	}
+	#[inline]
+	fn push_matching_exclude_query_group(
+		_groups_to_maps: &IndexMap<Vec<TypeId>, Vec<usize>>,
+		_out: &mut Vec<usize>,
+	) {
+		// Do nothing as this is not an exclude
+	}
+	type Storage = Rc<RefCell<DensePagedDataActual<Self::RawType>>>;
+	#[inline]
+	fn get_storage(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_id: usize,
+	) -> Self::Storage {
+		maps.get_index(map_id)
+			.unwrap()
+			.1
+			.get_strong::<Self::RawType>()
+	}
+
+	type StorageSlice = Option<
+		OwningRefMut<
+			OwningHandle<
+				Rc<RefCell<DensePagedDataActual<Self::RawType>>>,
+				RefMut<'static, DensePagedDataActual<Self::RawType>>,
+			>,
+			[Self::RawType],
+		>,
+	>;
+	#[inline]
+	fn get_storage_slice_at(storage: &Self::Storage, group: usize) -> Option<Self::StorageSlice> {
+		let owned = OwningHandle::new_mut(storage.clone());
+		OwningRefMut::new(owned)
+			.try_map_mut(|s| {
+				let slice = s.data[group].as_mut_slice();
+				if slice.len() > 0 {
+					Ok(slice)
+				} else {
+					Err(())
+				}
+			})
+			.map_or(Some(None), |slice| Some(Some(slice)))
+	}
+
+	type StorageValue = Option<
+		OwningRefMut<
+			OwningHandle<
+				Rc<RefCell<DensePagedDataActual<Self::RawType>>>,
+				RefMut<'static, DensePagedDataActual<Self::RawType>>,
+			>,
+			Self::RawType,
+		>,
+	>;
+	#[inline]
+	fn get_storage_value_at(
+		storage: &Self::Storage,
+		group: usize,
+		index: usize,
+	) -> Option<Self::StorageValue> {
+		let owned = OwningHandle::new_mut(storage.clone());
+		OwningRefMut::new(owned)
+			.try_map_mut(|s| {
+				let slice = &mut s.data[group];
+				if slice.len() > index {
+					Ok(&mut slice[index])
+				} else {
+					Err(())
+				}
+			})
+			.map_or(Some(None), |slice| Some(Some(slice)))
+	}
+}
+
+pub trait ComponentTuple<EntityType: Entity>: Sized {
+	type LenTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
+	fn get_tids() -> generic_array::GenericArray<TypeId, Self::LenTN>;
+	#[inline]
+	fn into_type_idx_vec(maps: &mut MapIndexMap) -> Vec<usize> {
+		let mut idxs = Vec::with_capacity(Self::LenTN::USIZE);
+		Self::populate_type_idx_vec(&mut idxs, maps);
+		idxs
+	}
+	fn populate_type_idx_vec(idxs: &mut Vec<usize>, maps: &mut MapIndexMap);
+	type StoragesMut;
+	fn get_storages_mut(maps: &MapIndexMap, map_idxs: &[usize]) -> Self::StoragesMut;
+	type StorageGroupsMut;
+	fn get_storages_group_mut(
+		maps: &MapIndexMap,
+		map_idxs: &[usize],
+		group: usize,
+	) -> Self::StorageGroupsMut;
+	fn insert(self, maps: &mut MapIndexMap, map_idxs: &[usize], group: usize);
+	fn insert_in_group(self, groups: &mut Self::StorageGroupsMut);
+}
+
+impl<EntityType: Entity> ComponentTuple<EntityType> for () {
+	type LenTN = generic_array::typenum::U0;
+	#[inline]
+	fn get_tids() -> GenericArray<TypeId, Self::LenTN> {
+		generic_array::GenericArray::clone_from_slice(&[])
+	}
+	#[inline]
+	fn populate_type_idx_vec(_idxs: &mut Vec<usize>, _maps: &mut MapIndexMap) {}
+	type StoragesMut = ();
+	#[inline]
+	fn get_storages_mut(_maps: &MapIndexMap, _map_idxs: &[usize]) -> Self::StoragesMut {}
+	type StorageGroupsMut = ();
+	#[inline]
+	fn get_storages_group_mut(
+		_maps: &MapIndexMap,
+		_map_idxs: &[usize],
+		_group: usize,
+	) -> Self::StorageGroupsMut {
+	}
+	#[inline]
+	fn insert(self, _maps: &mut MapIndexMap, _map_idxs: &[usize], _group: usize) {}
+	#[inline]
+	fn insert_in_group(self, _groups: &mut Self::StorageGroupsMut) {}
+}
+
+impl<EntityType: Entity, A: 'static> ComponentTuple<EntityType> for (A,) {
+	type LenTN = generic_array::typenum::U1;
+	#[inline]
+	fn get_tids() -> GenericArray<TypeId, Self::LenTN> {
+		generic_array::GenericArray::clone_from_slice(&[std::any::TypeId::of::<A>()])
+	}
+	#[inline]
+	fn populate_type_idx_vec(idxs: &mut Vec<usize>, maps: &mut MapIndexMap) {
+		{
+			let entry = maps.entry(std::any::TypeId::of::<A>());
+			idxs.push(entry.index());
+			entry.or_insert_with(|| Box::new(DensePagedDataInstance::<A>::new()));
+		}
+	}
+	type StoragesMut = (Rc<RefCell<DensePagedDataActual<A>>>,);
+	#[inline]
+	fn get_storages_mut(maps: &MapIndexMap, map_idxs: &[usize]) -> Self::StoragesMut {
+		let a = {
+			let (_type_id, a) = maps
+				.get_index(map_idxs[0])
+				.expect("Map is in invalid state!  Shouldn't happen!");
+			a.get_strong::<A>()
+		};
+		(a,)
+	}
+	type StorageGroupsMut = (
+		OwningRefMut<
+			OwningHandle<
+				Rc<RefCell<DensePagedDataActual<A>>>,
+				RefMut<'static, DensePagedDataActual<A>>,
+			>,
+			Vec<A>,
+		>,
+	);
+	#[inline]
+	fn get_storages_group_mut(
+		maps: &MapIndexMap,
+		map_idxs: &[usize],
+		group: usize,
+	) -> Self::StorageGroupsMut {
+		let a = {
+			let (_type_id, map) = maps
+				.get_index(map_idxs[0])
+				.expect("Map is in invalid state!  Shouldn't happen!");
+			OwningRefMut::new(OwningHandle::new_mut(map.get_strong::<A>()))
+				.map_mut(|s| &mut s.data[group])
+		};
+		(a,)
+	}
+	#[inline]
+	fn insert(self, maps: &mut MapIndexMap, map_idxs: &[usize], group: usize) {
+		{
+			let (_type_id, map) = maps
+				.get_index_mut(map_idxs[0])
+				.expect("Map is in invalid state!  Shouldn't happen!");
+			map.get_refmut::<A>().push(group, self.0);
+		}
+	}
+	#[inline]
+	fn insert_in_group(self, mut groups: &mut Self::StorageGroupsMut) {
+		let (ca,) = self;
+		let (a,) = &mut groups;
+		a.push(ca);
+	}
+}
+
+macro_rules! impl_ComponentTuple {
+	($GALEN:path, $(($ID:ident $NAME:ident $CNAME:ident $IDX:literal)),+) => {
+		impl<EntityType: Entity, $($ID: 'static),+> ComponentTuple<EntityType> for ($($ID),+) {
+			type LenTN = $GALEN;
+			#[inline]
+			fn get_tids() -> GenericArray<TypeId, Self::LenTN> {
+				generic_array::GenericArray::clone_from_slice(&[$(std::any::TypeId::of::<$ID>()),+])
+			}
+			#[inline]
+			fn populate_type_idx_vec(idxs: &mut Vec<usize>, maps: &mut MapIndexMap) {
+				$({
+					let entry = maps.entry(std::any::TypeId::of::<$ID>());
+					idxs.push(entry.index());
+					entry.or_insert_with(|| Box::new(DensePagedDataInstance::<$ID>::new()));
+				})+
+			}
+			type StoragesMut = ($(Rc<RefCell<DensePagedDataActual<$ID>>>,)+);
+			#[inline]
+			fn get_storages_mut(maps: &MapIndexMap, map_idxs: &[usize]) -> Self::StoragesMut {
+				$(let $NAME = {
+					let (_type_id, map) = maps
+						.get_index(map_idxs[$IDX])
+						.expect("Map is in invalid state!  Shouldn't happen!");
+					map.get_strong::<$ID>()
+				};)+
+				($($NAME,)+)
+			}
+			type StorageGroupsMut = (
+				$(OwningRefMut<
+					OwningHandle<
+						Rc<RefCell<DensePagedDataActual<$ID>>>,
+						RefMut<'static, DensePagedDataActual<$ID>>,
+					>,
+					Vec<$ID>,
+				>,)+
+			);
+			#[inline]
+			fn get_storages_group_mut(
+				maps: &MapIndexMap,
+				map_idxs: &[usize],
+				group: usize,
+			) -> Self::StorageGroupsMut {
+				$(let $NAME = {
+					let (_type_id, map) = maps
+						.get_index(map_idxs[$IDX])
+						.expect("Map is in invalid state!  Shouldn't happen!");
+					OwningRefMut::new(OwningHandle::new_mut(map.get_strong::<$ID>())).map_mut(|s| &mut s.data[group])
+				};)+
+				($($NAME,)+)
+			}
+			#[inline]
+			fn insert(self, maps: &mut MapIndexMap, map_idxs: &[usize], group: usize) {
+				let ($($NAME,)+) = self;
+				$({
+					let (_type_id, map) = maps
+						.get_index_mut(map_idxs[$IDX])
+						.expect("Map is in invalid state!  Shouldn't happen!");
+					map.get_refmut::<$ID>().push(group, $NAME);
+				})+
+			}
+			#[inline]
+			fn insert_in_group(self, mut groups: &mut Self::StorageGroupsMut) {
+				let ($($CNAME,)+) = self;
+				let ($($NAME,)+) = &mut groups;
+				$($NAME.push($CNAME);)+
+			}
+		}
+	};
+}
+impl_ComponentTuple!(generic_array::typenum::U2, (A a ca 0), (B b cb 1));
+impl_ComponentTuple!(generic_array::typenum::U3, (A a ca 0), (B b cb 1), (C c cc 2));
+
+pub trait ComponentTupleQuery<EntityType: Entity> {
 	type LenIncludeTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
 	type LenExcludeTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
 	fn get_include_tids() -> generic_array::GenericArray<TypeId, Self::LenIncludeTN>;
@@ -1141,14 +1828,18 @@ pub trait ComponentTupleQuery {
 		}
 		out
 	}
-	fn get_map_idxs(
-		maps: &mut MapIndexMap,
-		include_tids: &GenericArray<TypeId, Self::LenIncludeTN>,
-	) -> Vec<usize>;
-	type Storages;
-	fn get_storages(maps: &MapIndexMap, map_ids: &[usize]) -> Self::Storages;
+	fn get_map_idxs(maps: &mut MapIndexMap) -> Vec<usize>;
+	type Storages: Clone;
+	fn get_storages(
+		entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_ids: &[usize],
+	) -> Self::Storages;
 	type StorageSlices;
-	fn get_storage_slices_at(storages: &Self::Storages, group: usize) -> Self::StorageSlices;
+	fn get_storage_slices_at(
+		storages: &Self::Storages,
+		group: usize,
+	) -> Option<Self::StorageSlices>;
 	// type StorageSlicesRef: 'a;
 	// fn get_storage_slices_ref_at(
 	// 	storages: &'a mut Self::Storages,
@@ -1162,7 +1853,7 @@ pub trait ComponentTupleQuery {
 	) -> Option<Self::StorageValues>;
 }
 
-impl ComponentTupleQuery for () {
+impl<EntityType: Entity> ComponentTupleQuery<EntityType> for () {
 	type LenIncludeTN = generic_array::typenum::U0;
 	type LenExcludeTN = generic_array::typenum::U0;
 	#[inline]
@@ -1174,20 +1865,27 @@ impl ComponentTupleQuery for () {
 		generic_array::GenericArray::clone_from_slice(&[])
 	}
 
-	fn get_map_idxs(
-		maps: &mut MapIndexMap,
-		include_tids: &GenericArray<TypeId, Self::LenIncludeTN>,
-	) -> Vec<usize> {
+	fn get_map_idxs(_maps: &mut MapIndexMap) -> Vec<usize> {
 		vec![]
 	}
 
 	type Storages = ();
 	#[inline]
-	fn get_storages(_maps: &MapIndexMap, _map_ids: &[usize]) -> Self::Storages {}
+	fn get_storages(
+		_entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		_maps: &MapIndexMap,
+		_map_ids: &[usize],
+	) -> Self::Storages {
+	}
 
 	type StorageSlices = ();
 	#[inline]
-	fn get_storage_slices_at(_storages: &Self::Storages, group: usize) -> Self::StorageSlices {}
+	fn get_storage_slices_at(
+		_storages: &Self::Storages,
+		_group: usize,
+	) -> Option<Self::StorageSlices> {
+		Some(())
+	}
 	// type StorageSlicesRef = ();
 	// #[inline]
 	// fn get_storage_slices_ref_at(
@@ -1207,7 +1905,9 @@ impl ComponentTupleQuery for () {
 	}
 }
 
-impl<A: 'static + ComponentQuery> ComponentTupleQuery for (A,) {
+impl<EntityType: Entity, A: 'static + ComponentQuery<EntityType>> ComponentTupleQuery<EntityType>
+	for (A,)
+{
 	type LenIncludeTN = A::LenIncludeTN;
 	type LenExcludeTN = A::LenExcludeTN;
 	#[inline]
@@ -1225,10 +1925,7 @@ impl<A: 'static + ComponentQuery> ComponentTupleQuery for (A,) {
 		.unwrap()
 	}
 	#[inline]
-	fn get_map_idxs(
-		maps: &mut MapIndexMap,
-		include_tids: &GenericArray<TypeId, Self::LenIncludeTN>,
-	) -> Vec<usize> {
+	fn get_map_idxs(maps: &mut MapIndexMap) -> Vec<usize> {
 		let a: usize = {
 			let entry = maps.entry(std::any::TypeId::of::<A::RawType>());
 			let index = entry.index();
@@ -1241,17 +1938,24 @@ impl<A: 'static + ComponentQuery> ComponentTupleQuery for (A,) {
 	type Storages = (A::Storage,);
 
 	#[inline]
-	fn get_storages(maps: &MapIndexMap, map_ids: &[usize]) -> Self::Storages {
-		let a = A::get_storage(maps, map_ids[0]);
+	fn get_storages(
+		entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_ids: &[usize],
+	) -> Self::Storages {
+		let a = A::get_storage(entities, maps, map_ids[0]);
 		(a,)
 	}
 
 	type StorageSlices = (A::StorageSlice,);
 	#[inline]
-	fn get_storage_slices_at(storages: &Self::Storages, group: usize) -> Self::StorageSlices {
+	fn get_storage_slices_at(
+		storages: &Self::Storages,
+		group: usize,
+	) -> Option<Self::StorageSlices> {
 		let (a,) = storages;
-		let a = A::get_storage_slice_at(&a, group);
-		(a,)
+		let a = A::get_storage_slice_at(&a, group)?;
+		Some((a,))
 	}
 
 	type StorageValues = (A::StorageValue,);
@@ -1267,25 +1971,30 @@ impl<A: 'static + ComponentQuery> ComponentTupleQuery for (A,) {
 	}
 }
 
-impl< A: 'static + ComponentQuery, B: 'static + ComponentQuery> ComponentTupleQuery
-	for (A, B)
+impl<
+		EntityType: Entity,
+		A: 'static + ComponentQuery<EntityType>,
+		B: 'static + ComponentQuery<EntityType>,
+	> ComponentTupleQuery<EntityType> for (A, B)
 where
-	<A as ComponentQuery>::LenIncludeTN: std::ops::Add<<B as ComponentQuery>::LenIncludeTN>,
-	<<A as ComponentQuery>::LenIncludeTN as std::ops::Add<
-		<B as ComponentQuery>::LenIncludeTN,
+	<A as ComponentQuery<EntityType>>::LenIncludeTN:
+		std::ops::Add<<B as ComponentQuery<EntityType>>::LenIncludeTN>,
+	<<A as ComponentQuery<EntityType>>::LenIncludeTN as std::ops::Add<
+		<B as ComponentQuery<EntityType>>::LenIncludeTN,
 	>>::Output: generic_array::ArrayLength<TypeId>,
-	<A as ComponentQuery>::LenExcludeTN: std::ops::Add<<B as ComponentQuery>::LenExcludeTN>,
-	<<A as ComponentQuery>::LenExcludeTN as std::ops::Add<
-		<B as ComponentQuery>::LenExcludeTN,
+	<A as ComponentQuery<EntityType>>::LenExcludeTN:
+		std::ops::Add<<B as ComponentQuery<EntityType>>::LenExcludeTN>,
+	<<A as ComponentQuery<EntityType>>::LenExcludeTN as std::ops::Add<
+		<B as ComponentQuery<EntityType>>::LenExcludeTN,
 	>>::Output: generic_array::ArrayLength<TypeId>,
 {
 	type LenIncludeTN = generic_array::typenum::Sum<
 		A::LenIncludeTN,
-		<(B,) as ComponentTupleQuery>::LenIncludeTN,
+		<(B,) as ComponentTupleQuery<EntityType>>::LenIncludeTN,
 	>;
 	type LenExcludeTN = generic_array::typenum::Sum<
 		A::LenExcludeTN,
-		<(B,) as ComponentTupleQuery>::LenExcludeTN,
+		<(B,) as ComponentTupleQuery<EntityType>>::LenExcludeTN,
 	>;
 	#[inline]
 	fn get_include_tids() -> GenericArray<TypeId, Self::LenIncludeTN> {
@@ -1309,10 +2018,7 @@ where
 	}
 
 	#[inline]
-	fn get_map_idxs(
-		maps: &mut MapIndexMap,
-		include_tids: &GenericArray<TypeId, Self::LenIncludeTN>,
-	) -> Vec<usize> {
+	fn get_map_idxs(maps: &mut MapIndexMap) -> Vec<usize> {
 		let a: usize = {
 			let entry = maps.entry(std::any::TypeId::of::<A::RawType>());
 			let index = entry.index();
@@ -1330,9 +2036,13 @@ where
 
 	type Storages = (A::Storage, B::Storage);
 	#[inline]
-	fn get_storages(maps: &MapIndexMap, map_ids: &[usize]) -> Self::Storages {
-		let a = A::get_storage(maps, map_ids[0]);
-		let b = B::get_storage(maps, map_ids[1]);
+	fn get_storages(
+		entities: &Rc<RefCell<Vec<Vec<EntityType>>>>,
+		maps: &MapIndexMap,
+		map_ids: &[usize],
+	) -> Self::Storages {
+		let a = A::get_storage(entities, maps, map_ids[0]);
+		let b = B::get_storage(entities, maps, map_ids[1]);
 		(a, b)
 	}
 
@@ -1350,11 +2060,14 @@ where
 
 	type StorageSlices = (A::StorageSlice, B::StorageSlice);
 	#[inline]
-	fn get_storage_slices_at(storages: &Self::Storages, group: usize) -> Self::StorageSlices {
+	fn get_storage_slices_at(
+		storages: &Self::Storages,
+		group: usize,
+	) -> Option<Self::StorageSlices> {
 		let (a, b) = storages;
-		let a = A::get_storage_slice_at(a, group);
-		let b = B::get_storage_slice_at(b, group);
-		(a, b)
+		let a = A::get_storage_slice_at(a, group)?;
+		let b = B::get_storage_slice_at(b, group)?;
+		Some((a, b))
 	}
 
 	type StorageValues = (A::StorageValue, B::StorageValue);
@@ -1364,10 +2077,10 @@ where
 		group: usize,
 		index: usize,
 	) -> Option<Self::StorageValues> {
-		let (a,b) = storages;
+		let (a, b) = storages;
 		let a = A::get_storage_value_at(a, group, index)?;
 		let b = B::get_storage_value_at(b, group, index)?;
-		Some((a,b,))
+		Some((a, b))
 	}
 }
 
@@ -1425,13 +2138,8 @@ pub trait ComponentSet: 'static + TypeList {
 	}
 	fn populate_type_idx_vec(idxs: &mut Vec<usize>, maps: &mut MapIndexMap);
 	#[inline]
-	fn insert(
-		self,
-		maps: &mut MapIndexMap,
-		map_idxs: &[usize],
-		group: usize,
-	) -> ComponentLocations {
-		self.do_insert(maps, map_idxs, group, 0, 0)
+	fn insert(self, maps: &mut MapIndexMap, map_idxs: &[usize], group: usize) {
+		self.do_insert(maps, map_idxs, group, 0, 0);
 	}
 	fn do_insert(
 		self,
@@ -1440,7 +2148,7 @@ pub trait ComponentSet: 'static + TypeList {
 		group: usize,
 		map_idx_idx: usize,
 		data_index: usize,
-	) -> ComponentLocations;
+	);
 	fn ensure_exists(maps: &mut MapIndexMap, group_size: usize);
 	#[inline]
 	fn get_matching_query_groups(group_sets: &IndexMap<Vec<TypeId>, Vec<usize>>) -> Vec<usize> {
@@ -1468,11 +2176,11 @@ impl ComponentSet for HNil {
 		self,
 		_maps: &mut MapIndexMap,
 		_map_idxs: &[usize],
-		group: usize,
+		_group: usize,
 		_map_idx_idx: usize,
-		data_index: usize,
-	) -> ComponentLocations {
-		ComponentLocations::new(group, data_index)
+		_data_index: usize,
+	) {
+		//ComponentLocations::new(group, data_index)
 	}
 	#[inline]
 	fn ensure_exists(_maps: &mut MapIndexMap, _group_size: usize) {}
@@ -1507,7 +2215,7 @@ where
 		group: usize,
 		map_idx_idx: usize,
 		_data_index: usize,
-	) -> ComponentLocations {
+	) {
 		let map_idx = map_idxs[map_idx_idx];
 		let (_type_id, map) = maps
 			.get_index_mut(map_idx)
@@ -1516,7 +2224,7 @@ where
 		//let data_index = map.get_mut().cast_mut::<H>().push(group, self.head);
 		// let data_index = map.write()?.ca.push(group, self.head);
 		self.tail
-			.do_insert(maps, map_idxs, group, map_idx_idx + 1, data_index)
+			.do_insert(maps, map_idxs, group, map_idx_idx + 1, data_index);
 	}
 
 	fn ensure_exists(maps: &mut MapIndexMap, group_size: usize) {
@@ -2011,15 +2719,21 @@ mod tests {
 	fn sparse_typed_page_multimap_tests() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
 		//assert_eq!(map.len_entities(), 0);
-		assert_eq!(map.insert(1, hlist![21usize, 6.28f32, true]), Ok(()));
+		assert_eq!(map.insert(1, (21usize, 6.28f32, true)), Ok(()));
 		// assert_eq!(map.get::<usize>(1), Ok(&21));
 		// map.get_mut::<usize>(1).map(|i| *i *= 2).unwrap();
 		// assert_eq!(map.get::<usize>(1), Ok(&42));
-		let inserts: Vec<_> = (2..10u64)
-			.map(|i| (i, hlist![21usize, 6.28f32, true]))
-			.collect();
 
+		assert!(map.remove(2).is_err());
+
+		let inserts: Vec<_> = (2..10u64).map(|i| (i, (21usize, 6.28f32, true))).collect();
 		assert_eq!(map.extend_iter(inserts), Ok(()));
+
+		assert_eq!(map.contains(2), true);
+		map.remove(2).unwrap();
+		assert_eq!(map.contains(2), false);
+		assert!(map.remove(2).is_err());
+
 		// assert_eq!(map.get::<usize>(2), Ok(&21));
 		// assert_eq!(map.get::<usize>(3), Ok(&21));
 		// assert_eq!(map.get::<usize>(4), Ok(&21));
@@ -2063,7 +2777,7 @@ mod tests {
 		// 	))
 		// );
 
-		assert_eq!(map.insert(22, hlist![21usize, 6.28f32, true]), Ok(()));
+		assert_eq!(map.insert(22, (21usize, 6.28f32, true)), Ok(()));
 		assert_eq!(
 			map.extend_iters(
 				vec![21u64, 22u64, 23u64].into_iter(),
@@ -2115,7 +2829,7 @@ mod tests {
 	#[test]
 	fn empty_entities() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
-		assert_eq!(map.insert(1, hlist![]), Ok(()));
+		assert_eq!(map.insert(1, ()), Ok(()));
 		assert_eq!(map.contains(1), true);
 	}
 
@@ -2125,7 +2839,7 @@ mod tests {
 		let mut query = map.query::<(&mut usize, &u16)>().unwrap();
 		let got = query.get(1);
 		assert!(got.is_none());
-		map.insert(1, hlist![21usize, 2u16]).unwrap();
+		map.insert(1, (21usize, 2u16)).unwrap();
 		{
 			let got = query.get(1);
 			assert!(got.is_some());
@@ -2144,9 +2858,9 @@ mod tests {
 	#[test]
 	fn queries_none() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
-		map.extend_iter((1..=2).map(|e| (e, hlist![e as usize, format!("test: {}", e)])))
+		map.extend_iter((1..=2).map(|e| (e, (e as usize, format!("test: {}", e)))))
 			.unwrap();
-		assert!(map.query::<()>().unwrap().into_iter().next().is_none());
+		assert!(map.query::<()>().unwrap().iter_slices().next().is_none());
 	}
 
 	#[test]
@@ -2155,20 +2869,149 @@ mod tests {
 		assert!(map
 			.query::<(&usize, &u32)>()
 			.unwrap()
-			.into_iter()
+			.iter_slices()
 			.next()
 			.is_none());
 	}
 
 	#[test]
+	fn query_iter() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		map.extend_iter((1..=2).map(|e| (e, (e as usize, format!("test: {}", e)))))
+			.unwrap();
+		let mut query = map.query::<(&mut usize,)>().unwrap();
+		assert_eq!(*query.get(1).unwrap().0, 1);
+		for (mut us,) in query.iter_slices() {
+			for u in us.iter_mut() {
+				*u += 1;
+			}
+		}
+		assert_eq!(*query.get(1).unwrap().0, 2);
+		for (mut us,) in query.iter_slices() {
+			for u in us.iter_mut() {
+				*u *= 2;
+			}
+		}
+		assert_eq!(*query.get(1).unwrap().0, 4);
+	}
+
+	#[test]
+	fn queries_opt() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		let mut query = map.query::<(&usize, Option<&u16>)>().unwrap();
+		assert_eq!(*query.get(1).unwrap().0, 1);
+		assert!(query.get(1).unwrap().1.is_none());
+		assert_eq!(*query.get(2).unwrap().0, 2);
+		assert_eq!(*query.get(2).unwrap().1.unwrap(), 2);
+		map.insert(3, (1usize,)).unwrap();
+		map.insert(4, (2usize, 2u16)).unwrap();
+		assert_eq!(*query.get(3).unwrap().0, 1);
+		assert!(query.get(3).unwrap().1.is_none());
+		assert_eq!(*query.get(4).unwrap().0, 2);
+		assert_eq!(*query.get(4).unwrap().1.unwrap(), 2);
+
+		let mut query = map.query::<(&isize, Option<&i16>)>().unwrap();
+		map.insert(5, (1isize,)).unwrap();
+		map.insert(6, (2isize, 2i16)).unwrap();
+		assert_eq!(*query.get(5).unwrap().0, 1);
+		assert!(query.get(5).unwrap().1.is_none());
+		assert_eq!(*query.get(6).unwrap().0, 2);
+		assert_eq!(*query.get(6).unwrap().1.unwrap(), 2);
+	}
+
+	#[test]
+	fn queries_mut_opt() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		let mut query = map.query::<(&usize, Option<&mut u16>)>().unwrap();
+		assert_eq!(*query.get(1).unwrap().0, 1);
+		assert!(query.get(1).unwrap().1.is_none());
+		assert_eq!(*query.get(2).unwrap().0, 2);
+		assert_eq!(*query.get(2).unwrap().1.unwrap(), 2);
+
+		*query.get(2).unwrap().1.unwrap() += 1;
+		assert_eq!(*query.get(2).unwrap().1.unwrap(), 3);
+	}
+
+	#[test]
+	fn queries_opt_iter() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		let query = map.query::<(&usize, Option<&u16>)>().unwrap();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		let mut iter = query.iter_slices();
+		assert_eq!(*iter.next().unwrap().1.unwrap(), [2]);
+		assert!(iter.next().unwrap().1.is_none());
+		assert!(iter.next().is_none());
+	}
+
+	#[test]
+	fn queries_with_entity() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		let mut query = map.query::<(&usize, EntityRef)>().unwrap();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		map.insert(3, (3usize,)).unwrap();
+		for (us, es) in query.iter_slices() {
+			for (u, e) in us.iter().zip(es.iter()) {
+				assert_eq!(*u, *e as usize);
+			}
+		}
+		assert_eq!(query.get(1).unwrap().1, 1);
+	}
+
+	// #[test]
+	// fn query_value_iterator() {
+	// 	let mut map = SparseTypedPagedMap::<u64>::new();
+	// 	let mut query = map.query::<(&mut usize, &u16)>().unwrap();
+	// 	map.insert(1, hlist![1usize]).unwrap();
+	// 	map.insert(2, hlist![2usize, 2u16]).unwrap();
+	// 	for (mut a, b) in query.iter() {
+	// 		*a += *b as usize;
+	// 	}
+	// 	assert_eq!(*query.get(2).unwrap().1, 3); // 4
+	// }
+
+	#[test]
+	fn queries_skip_empty() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		let mut query = map.query::<(&usize,)>().unwrap();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		map.insert(3, (1usize,)).unwrap();
+		assert_eq!(query.iter_slices().fold(0, |a, (s,)| a + s.len()), 3);
+		assert_eq!(query.iter_slices().fold(0, |a, _| a + 1), 2);
+		map.remove(2).unwrap();
+		assert!(query.get(1).is_some());
+		assert!(query.get(2).is_none());
+		assert!(query.get(3).is_some());
+		assert_eq!(query.iter_slices().fold(0, |a, (s,)| a + s.len()), 2);
+		assert_eq!(query.iter_slices().fold(0, |a, _| a + 1), 1);
+	}
+
+	#[test]
+	fn queries_exclude() {
+		let mut map = SparseTypedPagedMap::<u64>::new();
+		map.insert(1, (1usize,)).unwrap();
+		map.insert(2, (2usize, 2u16)).unwrap();
+		let mut query = map.query::<(&usize, Exclude<u16>)>().unwrap();
+		assert!(query.get(1).is_some());
+		assert!(query.get(2).is_none());
+		assert_eq!(query.iter_slices().map(|(s, ())| s.len()).sum::<usize>(), 1);
+	}
+
+	#[test]
 	fn queries_ref() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
-		map.extend_iter((1..=2).map(|e| (e, hlist![e as usize, format!("test: {}", e)])))
+		map.extend_iter((1..=2).map(|e| (e, (e as usize, format!("test: {}", e)))))
 			.unwrap();
 		assert_eq!(
 			map.query::<(&usize,)>()
 				.unwrap()
-				.into_iter()
+				.iter_slices()
 				.next()
 				.map(|(usizes,)| usizes.iter().sum()),
 			Some(3)
@@ -2176,7 +3019,7 @@ mod tests {
 		assert_eq!(
 			map.query::<(&usize, &String)>()
 				.unwrap()
-				.into_iter()
+				.iter_slices()
 				.next()
 				.map(|(usizes, _string)| usizes.iter().sum()),
 			Some(3)
@@ -2186,12 +3029,12 @@ mod tests {
 	#[test]
 	fn queries_mut() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
-		map.extend_iter((1..=2).map(|e| (e, hlist![e as usize, e as u16])))
+		map.extend_iter((1..=2).map(|e| (e, (e as usize, e as u16))))
 			.unwrap();
 		assert_eq!(
 			map.query::<(&mut usize,)>()
 				.unwrap()
-				.into_iter()
+				.iter_slices()
 				.next()
 				.map(|(mut usizes,)| {
 					usizes.iter_mut().for_each(|u| *u *= 2);
@@ -2203,7 +3046,7 @@ mod tests {
 		assert_eq!(
 			map.query::<(&mut usize, &u16)>()
 				.unwrap()
-				.into_iter()
+				.iter_slices()
 				.next()
 				.map(|(mut usizes, u16s)| {
 					usizes
@@ -2219,7 +3062,7 @@ mod tests {
 	#[test]
 	fn queries() {
 		let mut map = SparseTypedPagedMap::<u64>::new();
-		map.extend_iter((1..=2).map(|e| (e, hlist![e as usize, format!("test: {}", e)])))
+		map.extend_iter((1..=2).map(|e| (e, (e as usize, format!("test: {}", e)))))
 			.unwrap();
 		// let entries = map.maps.as_entries_mut();
 		// let entries = Entries::as_entries_mut(&mut map.maps);
@@ -2229,7 +3072,7 @@ mod tests {
 		// dbg!(&blah0.data);
 		// dbg!(&blah1.data);
 
-		for (usizes,) in map.query::<(&usize,)>().unwrap() {
+		for (usizes,) in map.query::<(&usize,)>().unwrap().iter_slices() {
 			assert_eq!(&*usizes, &[1, 2]);
 		}
 		map.query::<(&usize, &String)>().unwrap();

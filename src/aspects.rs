@@ -40,7 +40,7 @@ impl<RO: TypeList, RW: TypeList, E: TypeList> Aspects<RO, RW, E> {
 
 #[cfg(test)]
 mod tests {
-	use crate::frunk::hlist;
+	//use crate::frunk::hlist;
 
 	use super::*;
 

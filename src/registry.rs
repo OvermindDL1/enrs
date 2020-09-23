@@ -1,14 +1,14 @@
 pub use crate::entity::Entity;
 
 pub struct Registry<EntityType> {
-	e: EntityType,
+	_e: EntityType,
 }
 
 impl<EntityType: Entity> Registry<EntityType> {
-	#[warn(clippy::new_without_default)]
+	#[allow(clippy::new_without_default)]
 	pub fn new() -> Registry<EntityType> {
 		Registry {
-			e: EntityType::new(0),
+			_e: EntityType::new(0),
 		}
 	}
 }

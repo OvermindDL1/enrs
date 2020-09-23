@@ -123,15 +123,35 @@ impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryIndex<EntityType,
 		Ok(location)
 	}
 
-	pub fn remove(&mut self, entity: EntityType) -> Result<(), SecondaryIndexErrors<EntityType>> {
-		*self.get_mut(entity)? = self.invalid_index;
-		Ok(())
-	}
-
-	pub fn remove_iter(&mut self, entities: impl IntoIterator<Item = EntityType>) {
-		for entity in entities {
-			self.remove(entity)
-				.expect("Attempted to remove an entity when it was not already existing");
-		}
-	}
+	// pub fn remove(
+	// 	&mut self,
+	// 	entity: EntityType,
+	// ) -> Result<IndexType, SecondaryIndexErrors<EntityType>> {
+	// 	let (page_idx, offset) = Self::page_offset(entity);
+	//
+	// 	if page_idx >= self.pages.len() {
+	// 		return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+	// 	}
+	// 	let page = if let Some(page) = &mut self.pages[page_idx] {
+	// 		page
+	// 	} else {
+	// 		return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+	// 	};
+	//
+	// 	let location = &mut page[offset as usize];
+	// 	if *location == self.invalid_index {
+	// 		return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+	// 	}
+	//
+	// 	let ret = Ok(*location);
+	// 	*location = self.invalid_index;
+	// 	ret
+	// }
+	//
+	// pub fn remove_iter(&mut self, entities: impl IntoIterator<Item = EntityType>) {
+	// 	for entity in entities {
+	// 		self.remove(entity)
+	// 			.expect("Attempted to remove an entity when it was not already existing");
+	// 	}
+	// }
 }
