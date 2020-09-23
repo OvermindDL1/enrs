@@ -1789,6 +1789,7 @@ macro_rules! impl_ComponentTuple {
 }
 impl_ComponentTuple!(generic_array::typenum::U2, (A a ca 0), (B b cb 1));
 impl_ComponentTuple!(generic_array::typenum::U3, (A a ca 0), (B b cb 1), (C c cc 2));
+impl_ComponentTuple!(generic_array::typenum::U4, (A a ca 0), (B b cb 1), (C c cc 2), (D d cd 3));
 
 pub trait ComponentTupleQuery<EntityType: Entity> {
 	type LenIncludeTN: generic_array::typenum::Unsigned + generic_array::ArrayLength<TypeId>;
