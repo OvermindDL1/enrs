@@ -24,6 +24,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "bitvec"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8775e5606af6e145d17376be6d95f98245d393a143b41b7feba50d6b3d8367cd"
+dependencies = [
+ "funty",
+ "radium",
+ "tap",
+ "wyz",
+]
+
+[[package]]
 name = "bstr"
 version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -188,10 +200,12 @@ checksum = "cd56b59865bce947ac5958779cfa508f6c3b9497cc762b7e24a12d11ccde2c4f"
 name = "enrs"
 version = "0.2.0"
 dependencies = [
+ "bitvec",
  "criterion",
  "frunk",
  "generic-array",
  "indexmap",
+ "itertools",
  "owning_ref",
  "rayon",
  "tinyvec",
@@ -260,6 +274,12 @@ dependencies = [
  "quote 0.6.13",
  "syn 0.15.44",
 ]
+
+[[package]]
+name = "funty"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ba62103ce691c2fd80fbae2213dfdda9ce60804973ac6b6e97de818ea7f52c8"
 
 [[package]]
 name = "generic-array"
@@ -460,6 +480,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "radium"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a333b5f6adeff5a89f2e95dc2ea1ecb5319abbb56212afea6a37f87435338a5"
+
+[[package]]
 name = "rayon"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -618,6 +644,12 @@ dependencies = [
  "quote 1.0.7",
  "unicode-xid 0.2.1",
 ]
+
+[[package]]
+name = "tap"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36474e732d1affd3a6ed582781b3683df3d0563714c59c39591e8ff707cf078e"
 
 [[package]]
 name = "textwrap"
@@ -788,3 +820,9 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "wyz"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85e60b0d1b5f99db2556934e21937020776a5d31520bf169e851ac44e6420214"

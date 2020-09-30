@@ -5,6 +5,54 @@ pub mod registry;
 pub mod storages;
 pub mod utils;
 
+#[macro_export]
+macro_rules! TL {
+	[] => {
+		()
+	};
+	[ $c:ty $(,$cs:ty)* ] => {
+	    ($c, TL![$($cs),*])
+	};
+	[ $c:ty $(,$cs:ty)*, ] => {
+	    ($c, TL![$($cs),*])
+	};
+	[ $c:ty,, $cs:ty ] => {
+		($c, $cs)
+	}
+}
+
+#[macro_export]
+macro_rules! tl {
+	[] => {
+		()
+	};
+	[ $c:expr $(,$cs:expr)* ] => {
+	    ($c, tl![$($cs),*])
+	};
+	[ $c:expr $(,$cs:expr)*, ] => {
+	    ($c, tl![$($cs),*])
+	};
+	[ $c:expr,, $cs:expr ] => {
+		($c, $cs)
+	}
+}
+
+#[macro_export]
+macro_rules! tlp {
+	[] => {
+		()
+	};
+	[ $c:pat $(,$cs:pat)* ] => {
+	    ($c, tlp![$($cs),*])
+	};
+	[ $c:pat $(,$cs:pat)*, ] => {
+	    ($c, tlp![$($cs),*])
+	};
+	[ $c:pat,, $cs:pat ] => {
+		($c, $cs)
+	}
+}
+
 mod entity_instances {
 	pub use crate as enrs;
 	use crate::unsigned_integral_entity;

@@ -13,6 +13,8 @@ generic-array = "0.14.4" # REMOVEABLE: Because no const generics yet, remove thi
 # reffers = "0.6.0" # REMOVEABLE: Because no GAT's in stable rust yet
 owning_ref = "0.4.1" # REMOVEABLE: Because no GAT's in stable rust yet
 tinyvec = { version = "1.0", features = ["alloc"] } # Used for group iterating so far
+bitvec = "0.19" # Used for a variety of purposes, general container
+itertools = "0.9" # Useful iterator extensions that really should be built in to the standard library...
 
 [features]
 default = []
