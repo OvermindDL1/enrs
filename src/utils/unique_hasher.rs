@@ -77,6 +77,7 @@ impl core::hash::Hasher for UniqueHasher {
 	}
 }
 
+#[derive(Default)]
 pub struct UniqueHasherBuilder;
 
 impl core::hash::BuildHasher for UniqueHasherBuilder {
