@@ -6,6 +6,7 @@ use smol_str::SmolStr;
 
 use crate::database::{DatabaseId, TableId};
 use crate::entity::Entity;
+use crate::table::fields::{Field, IndexField};
 use crate::table::{Table, TableBuilder, TableCastable};
 use std::any::Any;
 
@@ -18,8 +19,8 @@ pub struct EntityTable<EntityType: Entity> {
 	/// match their actual index, if it's dead they don't.  If it's dead the
 	/// internal index actually points to the actual index of the next 'dead'
 	/// one, thus making a handle-based link-list.  If it points to
-	/// `0` then there are no more dead entities and a new one needs to be
-	/// created.  The generation gets incremented on destruction.
+	/// `0` then there are no more dead entities after this one.
+	/// The generation gets incremented on destruction.
 	entities: Vec<EntityType>,
 	/// This is the 'head' of the singly-linked list of destroyed entities.
 	destroyed: EntityType,
@@ -50,6 +51,14 @@ impl<EntityType: Entity> EntityTable<EntityType> {
 		(idx < self.entities.len()) && self.entities[idx] == entity
 	}
 
+	pub fn valid(&self, entity: EntityType) -> Option<ValidEntity<EntityType>> {
+		if self.contains(entity) {
+			Some(ValidEntity(entity, PhantomData))
+		} else {
+			None
+		}
+	}
+
 	pub fn insert(&mut self) -> EntityType {
 		if self.destroyed.is_null() {
 			// `destroyed` linked list is empty
@@ -65,6 +74,8 @@ impl<EntityType: Entity> EntityTable<EntityType> {
 		}
 	}
 }
+
+pub struct ValidEntity<'a, EntityType: Entity>(pub EntityType, PhantomData<&'a ()>);
 
 impl<EntityType: Entity> TableBuilder for EntityTableBuilder<EntityType> {
 	fn build(
@@ -111,10 +122,22 @@ impl<EntityType: Entity> Table for EntityTable<EntityType> {
 	fn indexes_len(&self) -> usize {
 		1
 	}
+
+	fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField> {
+		if idx != 0 {
+			return None;
+		}
+
+		struct PrimaryKey;
+		impl Field for PrimaryKey {}
+		impl IndexField for PrimaryKey {}
+		static PRIMARY_KEY: PrimaryKey = PrimaryKey;
+		Some(&PRIMARY_KEY)
+	}
 }
 
 impl<EntityType: Entity> TableCastable for EntityTable<EntityType> {
 	fn get_strong_self(&self) -> Rc<RefCell<Self>> {
-		self.this.upgrade().unwrap() // It's obviously valid since it's obviously us
+		self.this.upgrade().unwrap() // It's obviously valid since it's obviously self
 	}
 }

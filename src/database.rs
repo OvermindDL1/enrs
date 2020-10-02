@@ -44,8 +44,6 @@ impl std::error::Error for DatabaseErrors {
 // 	pub(super) trait Sealed {}
 // }
 
-struct TableWrapper {}
-
 pub struct Tables {
 	database_id: DatabaseId,
 	mapping: IndexMap<SmolStr, Rc<RefCell<dyn Table>>>,

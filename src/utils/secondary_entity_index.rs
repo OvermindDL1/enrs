@@ -30,13 +30,13 @@ impl<EntityType: Entity> std::fmt::Display for SecondaryIndexErrors<EntityType> 
 }
 
 #[derive(Clone)]
-pub struct SecondaryIndex<EntityType: Entity, IndexType: Copy + PartialEq> {
+pub struct SecondaryEntityIndex<EntityType: Entity, IndexType: Copy + PartialEq> {
 	invalid_index: IndexType,
 	pages: Vec<Option<Box<[IndexType; PER_PAGE]>>>,
 	_phantom: PhantomData<EntityType>,
 }
 
-impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryIndex<EntityType, IndexType> {
+impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryEntityIndex<EntityType, IndexType> {
 	pub fn new(invalid_index: IndexType) -> Self {
 		Self {
 			invalid_index,
