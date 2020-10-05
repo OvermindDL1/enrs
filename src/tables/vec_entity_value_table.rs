@@ -3,29 +3,29 @@ use crate::entity::Entity;
 use crate::table::fields::{Field, IndexField};
 use crate::table::{Table, TableBuilder, TableCastable};
 use crate::tables::entity_table::{EntityTable, ValidEntity};
-use crate::utils::secondary_entity_index::{SecondaryEntityIndex, SecondaryIndexErrors};
+use bitvec::vec::BitVec;
 use smol_str::SmolStr;
 use std::any::Any;
 use std::cell::RefCell;
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::rc::{Rc, Weak};
 
-pub struct DenseEntityValueTable<EntityType: Entity, ValueType: 'static> {
+pub struct VecEntityValueTable<EntityType: Entity, ValueType: 'static> {
 	this: Weak<RefCell<Self>>,
 	database_id: DatabaseId,
 	table_name: SmolStr,
 	table_id: TableId,
-	//entity_table: EntityTable<EntityType>,
-	reverse: SecondaryEntityIndex<EntityType, usize>,
 	entities: Vec<EntityType>,
-	values: Vec<ValueType>,
+	values: Vec<MaybeUninit<ValueType>>,
+	count: usize,
 }
 
-impl<EntityType: Entity, ValueType: 'static> DenseEntityValueTable<EntityType, ValueType> {
+impl<EntityType: Entity, ValueType: 'static> VecEntityValueTable<EntityType, ValueType> {
 	pub fn builder(
 		entity_table: Rc<RefCell<EntityTable<EntityType>>>,
-	) -> DenseEntityValueTableBuilder<EntityType, ValueType> {
-		DenseEntityValueTableBuilder {
+	) -> VecEntityValueTableBuilder<EntityType, ValueType> {
+		VecEntityValueTableBuilder {
 			entity_table,
 			capacity: 0,
 			_phantom: PhantomData,
@@ -35,8 +35,8 @@ impl<EntityType: Entity, ValueType: 'static> DenseEntityValueTable<EntityType, V
 	pub fn builder_with_capacity(
 		entity_table: Rc<RefCell<EntityTable<EntityType>>>,
 		capacity: usize,
-	) -> DenseEntityValueTableBuilder<EntityType, ValueType> {
-		DenseEntityValueTableBuilder {
+	) -> VecEntityValueTableBuilder<EntityType, ValueType> {
+		VecEntityValueTableBuilder {
 			entity_table,
 			capacity,
 			_phantom: PhantomData,
@@ -44,59 +44,62 @@ impl<EntityType: Entity, ValueType: 'static> DenseEntityValueTable<EntityType, V
 	}
 
 	pub fn contains(&self, entity: EntityType) -> bool {
-		self.reverse.get(entity).is_ok()
+		self.entities.len() > entity.idx() && self.entities[entity.idx()] == entity
 	}
 
 	pub fn len(&self) -> usize {
-		self.entities.len()
+		self.count
 	}
 
 	pub fn is_empty(&self) -> bool {
-		self.entities.is_empty()
+		self.count == 0
 	}
 
-	pub fn insert(
-		&mut self,
-		entity: &ValidEntity<EntityType>,
-		value: ValueType,
-	) -> Result<(), SecondaryIndexErrors<EntityType>> {
-		let location = self.reverse.insert_mut(entity.raw())?;
-		*location = self.entities.len();
-		self.entities.push(entity.raw());
-		self.values.push(value);
+	pub fn insert(&mut self, entity: &ValidEntity<EntityType>, value: ValueType) -> Result<(), ()> {
+		let entity = entity.raw();
+		if self.entities.len() <= entity.idx() {
+			self.entities.resize(entity.idx() + 1, EntityType::new(0));
+			self.values.reserve(entity.idx() - self.values.len() + 1);
+			unsafe {
+				self.values.set_len(entity.idx() + 1);
+			}
+		}
+		if self.entities[entity.idx()] == entity {
+			return Err(());
+		}
+		self.entities[entity.idx()] = entity;
+		unsafe {
+			*self.values.get_unchecked_mut(entity.idx()) = MaybeUninit::new(value);
+		}
+		self.count += 1;
 		Ok(())
 	}
 
-	pub fn delete(&mut self, entity: EntityType) -> Result<(), SecondaryIndexErrors<EntityType>> {
-		let location_mut = self.reverse.get_mut(entity)?;
-		if self.entities[*location_mut] != entity {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+	pub fn delete(&mut self, entity: EntityType) -> Result<(), ()> {
+		if self.entities.len() <= entity.idx() || self.entities[entity.idx()] != entity {
+			return Err(());
 		}
-		let location = *location_mut;
-		*location_mut = usize::MAX;
-		self.entities.swap_remove(location);
-		self.values.swap_remove(location);
-		if self.entities.len() > location {
-			let moved = self
-				.reverse
-				.get_mut(self.entities[location])
-				.expect("reverse mapping is in invalid state with DenseEntityValueTable");
-			*moved = location
+		self.entities[entity.idx()] = EntityType::new(0);
+		unsafe {
+			// Can remove this and just forget about `self.values` if we can ensure it doesn't have a `Drop` implementation
+			let mut forgetting = MaybeUninit::uninit();
+			std::mem::swap(self.values.get_unchecked_mut(entity.idx()), &mut forgetting);
 		}
+		self.count -= 1;
 		Ok(())
 	}
 }
 
-pub struct DenseEntityValueTableBuilder<EntityType: Entity, ValueType: 'static> {
+pub struct VecEntityValueTableBuilder<EntityType: Entity, ValueType: 'static> {
 	entity_table: Rc<RefCell<EntityTable<EntityType>>>,
 	capacity: usize,
 	_phantom: PhantomData<ValueType>,
 }
 
 impl<EntityType: Entity, ValueType: 'static> TableBuilder
-	for DenseEntityValueTableBuilder<EntityType, ValueType>
+	for VecEntityValueTableBuilder<EntityType, ValueType>
 {
-	type Table = DenseEntityValueTable<EntityType, ValueType>;
+	type Table = VecEntityValueTable<EntityType, ValueType>;
 
 	fn build(
 		self,
@@ -105,17 +108,15 @@ impl<EntityType: Entity, ValueType: 'static> TableBuilder
 		table_id: TableId,
 	) -> Rc<RefCell<Self::Table>> {
 		let mut entities = self.entity_table.borrow_mut();
-		let this = Rc::new(RefCell::new(
-			DenseEntityValueTable::<EntityType, ValueType> {
-				this: Weak::new(),
-				database_id,
-				table_name: table_name.into(),
-				table_id,
-				reverse: SecondaryEntityIndex::new(usize::MAX),
-				entities: Vec::with_capacity(self.capacity),
-				values: Vec::with_capacity(self.capacity),
-			},
-		));
+		let this = Rc::new(RefCell::new(VecEntityValueTable::<EntityType, ValueType> {
+			this: Weak::new(),
+			database_id,
+			table_name: table_name.into(),
+			table_id,
+			entities: Vec::with_capacity(self.capacity),
+			values: Vec::with_capacity(self.capacity),
+			count: 0,
+		}));
 		this.borrow_mut().this = Rc::downgrade(&this);
 		let another_this = this.clone();
 		let _id = entities.on_delete_entity(Box::new(move |_entity_table_id, entity| {
@@ -129,9 +130,7 @@ impl<EntityType: Entity, ValueType: 'static> TableBuilder
 	}
 }
 
-impl<EntityType: Entity, ValueType: 'static> Table
-	for DenseEntityValueTable<EntityType, ValueType>
-{
+impl<EntityType: Entity, ValueType: 'static> Table for VecEntityValueTable<EntityType, ValueType> {
 	fn as_any(&self) -> &dyn Any {
 		self
 	}
@@ -170,7 +169,7 @@ impl<EntityType: Entity, ValueType: 'static> Table
 }
 
 impl<EntityType: Entity, ValueType: 'static> TableCastable
-	for DenseEntityValueTable<EntityType, ValueType>
+	for VecEntityValueTable<EntityType, ValueType>
 {
 	fn get_strong_self(&self) -> Rc<RefCell<Self>> {
 		self.this.upgrade().unwrap() // It's obviously valid since it's obviously self

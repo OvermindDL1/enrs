@@ -125,34 +125,11 @@ mod tests {
 				DenseEntityValueTable::<u64, isize>::builder(entities_storage.clone()),
 			)
 			.unwrap();
-		let mut insert_query = ints_storage.borrow().insert_query();
-		let mut locked = insert_query.try_lock().unwrap();
 		let entity = entities_storage.borrow_mut().insert().raw();
 		assert_eq!(entity, 1);
-		locked
+		ints_storage
+			.borrow_mut()
 			.insert(&entities_storage.borrow().valid(entity).unwrap(), 42)
 			.unwrap();
-		// AtomicPtr::
-		// use crate::table::Table;
-		// use bitvec::prelude::*;
-		// use crossbeam::atomic::*;
-		// let cell = bitvec![42];
-		// assert!(AtomicCell::<&dyn Table>::is_lock_free());
-	}
-
-	#[test]
-	fn blah_test() {
-		// use bitvec::prelude::*;
-		// use rayon::prelude::*;
-		// use std::cell::*;
-		// let mut bitvecs = vec![bitvec![8]; 64];
-		// let bitslices = bitvecs.as_mut_slice();
-		// let bitcellslices = UnsafeCell::from_mut(bitslices);
-		// let mut bitslicescells = bitcellslices.as_slice_of_cells();
-		// (0..64)
-		// 	.collect::<Vec<usize>>()
-		// 	.par_iter()
-		// 	.for_each(|&i| bitslicescells[i].get_mut().set(i, true));
-		// dbg!(bitvecs);
 	}
 }
