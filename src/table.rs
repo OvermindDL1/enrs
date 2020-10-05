@@ -28,12 +28,13 @@ use crate::table::fields::IndexField;
 // }
 
 pub trait TableBuilder {
+	type Table: Table;
 	fn build(
 		self,
 		database_id: DatabaseId,
 		table_name: &str,
 		table_id: TableId,
-	) -> Rc<RefCell<dyn Table>>;
+	) -> Rc<RefCell<Self::Table>>;
 }
 
 pub trait Table: 'static {
@@ -66,25 +67,27 @@ impl dyn Table {
 #[cfg(test)]
 mod tests {
 	use crate::database::*;
+	use crate::table::Table;
 	use crate::tables::dense_entity_value_table::DenseEntityValueTable;
 	use crate::tables::entity_table::EntityTable;
-	use std::sync::atomic::AtomicPtr;
 
 	#[test]
 	fn get_strong() {
 		let mut database = Database::new();
 		assert_eq!(database.tables.len(), 0);
-		let entities_table_id = database
+		let entities_storage = database
 			.tables
 			.create("entities", EntityTable::<u64>::builder())
 			.unwrap();
-		let entities_table = database.tables.get_by_id(entities_table_id);
+		let entities_table = database
+			.tables
+			.get_by_id(entities_storage.borrow().table_id());
 		assert_eq!(entities_table.borrow().indexes_len(), 1);
 		let entities_storage = entities_table
 			.borrow()
 			.get_strong_cast::<EntityTable<u64>>()
 			.unwrap();
-		let entity = entities_storage.borrow_mut().insert();
+		let entity = entities_storage.borrow_mut().insert().raw();
 		assert!(entities_storage.borrow().contains(entity));
 		assert_eq!(entity, 1);
 	}
@@ -94,52 +97,40 @@ mod tests {
 	fn cannot_mutate_entities_with_valid_active() {
 		let mut database = Database::new();
 		assert_eq!(database.tables.len(), 0);
-		let entities_table_id = database
+		let entities_storage = database
 			.tables
 			.create("entities", EntityTable::<u64>::builder())
 			.unwrap();
-		let entities_table = database.tables.get_by_id(entities_table_id);
-		let entities_storage = entities_table
-			.borrow()
-			.get_strong_cast::<EntityTable<u64>>()
-			.unwrap();
-		let entity = entities_storage.borrow_mut().insert();
+		let entity = entities_storage.borrow_mut().insert().raw();
 		// Changing this to a borrow_mut and uncommenting below will not compile because `valid` is holding an immutable reference
 		let entities = entities_storage.borrow();
 		let valid_entity = entities.valid(entity).unwrap();
 		//let another_entity = entities.insert(); // No way to craft this without a mut while a valid is active, see above comment
 		let _another_entity = entities_storage.borrow_mut().insert(); // This will panic
-		assert_eq!(valid_entity.0, entity);
+		assert_eq!(valid_entity.raw(), entity);
 	}
 
 	#[test]
 	fn registration_test() {
 		let mut database = Database::new();
 		assert_eq!(database.tables.len(), 0);
-		let entities_table_id = database
+		let entities_storage = database
 			.tables
 			.create("entities", EntityTable::<u64>::builder())
 			.unwrap();
-		let entities_table = database.tables.get_by_id(entities_table_id);
-		let entities_storage = entities_table
-			.borrow()
-			.get_strong_cast::<EntityTable<u64>>()
-			.unwrap();
-		let ints_table_id = database
+		let ints_storage = database
 			.tables
-			.create("ints", DenseEntityValueTable::<u64, isize>::builder())
-			.unwrap();
-		let ints_table = database.tables.get_by_id(ints_table_id);
-		let ints_storage = ints_table
-			.borrow()
-			.get_strong_cast::<DenseEntityValueTable<u64, isize>>()
+			.create(
+				"ints",
+				DenseEntityValueTable::<u64, isize>::builder(entities_storage.clone()),
+			)
 			.unwrap();
 		let mut insert_query = ints_storage.borrow().insert_query();
 		let mut locked = insert_query.try_lock().unwrap();
-		let entity = entities_storage.borrow_mut().insert();
+		let entity = entities_storage.borrow_mut().insert().raw();
 		assert_eq!(entity, 1);
 		locked
-			.insert(entities_storage.borrow().valid(entity).unwrap(), 42)
+			.insert(&entities_storage.borrow().valid(entity).unwrap(), 42)
 			.unwrap();
 		// AtomicPtr::
 		// use crate::table::Table;
