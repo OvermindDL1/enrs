@@ -12,12 +12,12 @@ macro_rules! TL {
 	[] => {
 		()
 	};
-	[ $c:ty $(,$cs:ty)* ] => {
+	[ $c:ty $(,$cs:ty)* $(,)* ] => {
 	    ($c, TL![$($cs),*])
 	};
-	[ $c:ty $(,$cs:ty)*, ] => {
-	    ($c, TL![$($cs),*])
-	};
+	// [ $c:ty $(,$cs:ty)*, ] => {
+	//     ($c, TL![$($cs),*])
+	// };
 	[ $c:ty,, $cs:ty ] => {
 		($c, $cs)
 	}
@@ -28,12 +28,12 @@ macro_rules! tl {
 	[] => {
 		()
 	};
-	[ $c:expr $(,$cs:expr)* ] => {
+	[ $c:expr $(,$cs:expr)* $(,)* ] => {
 	    ($c, tl![$($cs),*])
 	};
-	[ $c:expr $(,$cs:expr)*, ] => {
-	    ($c, tl![$($cs),*])
-	};
+	// [ $c:expr $(,$cs:expr)*, ] => {
+	//     ($c, tl![$($cs),*])
+	// };
 	[ $c:expr,, $cs:expr ] => {
 		($c, $cs)
 	}
@@ -44,12 +44,12 @@ macro_rules! tlp {
 	[] => {
 		()
 	};
-	[ $c:pat $(,$cs:pat)* ] => {
+	[ $c:pat $(,$cs:pat)* $(,)* ] => {
 	    ($c, tlp![$($cs),*])
 	};
-	[ $c:pat $(,$cs:pat)*, ] => {
-	    ($c, tlp![$($cs),*])
-	};
+	// [ $c:pat $(,$cs:pat)*, ] => {
+	//     ($c, tlp![$($cs),*])
+	// };
 	[ $c:pat,, $cs:pat ] => {
 		($c, $cs)
 	}

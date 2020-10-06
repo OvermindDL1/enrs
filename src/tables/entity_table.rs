@@ -6,7 +6,6 @@ use smol_str::SmolStr;
 
 use crate::database::{DatabaseId, TableId};
 use crate::entity::Entity;
-use crate::table::fields::{Field, IndexField};
 use crate::table::{Table, TableBuilder, TableCastable};
 // use bitvec::prelude::*;
 use std::any::Any;
@@ -144,8 +143,20 @@ impl<EntityType: Entity> EntityTable<EntityType> {
 
 		Ok(())
 	}
+
+	pub fn clear(&mut self) -> Result<(), ()> {
+		// Entity 0 is the null entity, always points to itself
+		for idx in 1..self.entities.len() {
+			let entity = self.entities[idx];
+			if entity.idx() == idx {
+				self.delete(entity)?;
+			}
+		}
+		Ok(())
+	}
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct ValidEntity<'a, EntityType: Entity>(EntityType, PhantomData<&'a ()>);
 
 impl<'a, EntityType: Entity> Deref for ValidEntity<'a, EntityType> {
@@ -208,21 +219,21 @@ impl<EntityType: Entity> Table for EntityTable<EntityType> {
 		self.table_id
 	}
 
-	fn indexes_len(&self) -> usize {
-		1
-	}
-
-	fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField> {
-		if idx != 0 {
-			return None;
-		}
-
-		struct PrimaryKey;
-		impl Field for PrimaryKey {}
-		impl IndexField for PrimaryKey {}
-		static PRIMARY_KEY: PrimaryKey = PrimaryKey;
-		Some(&PRIMARY_KEY)
-	}
+	// fn indexes_len(&self) -> usize {
+	// 	1
+	// }
+	//
+	// fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField> {
+	// 	if idx != 0 {
+	// 		return None;
+	// 	}
+	//
+	// 	struct PrimaryKey;
+	// 	impl Field for PrimaryKey {}
+	// 	impl IndexField for PrimaryKey {}
+	// 	static PRIMARY_KEY: PrimaryKey = PrimaryKey;
+	// 	Some(&PRIMARY_KEY)
+	// }
 }
 
 impl<EntityType: Entity> TableCastable for EntityTable<EntityType> {

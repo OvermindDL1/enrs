@@ -1,3 +1,3 @@
-pub trait Field {}
-
-pub trait IndexField: Field {}
+// pub trait Field {}
+//
+// pub trait IndexField: Field {}

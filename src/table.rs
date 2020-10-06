@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::database::{DatabaseId, TableId};
-use crate::table::fields::IndexField;
+// use crate::table::fields::IndexField;
 // use smol_str::SmolStr;
 
 // pub struct TableMetadata {
@@ -43,11 +43,11 @@ pub trait Table: 'static {
 	fn get_database_id(&self) -> DatabaseId;
 	fn table_name(&self) -> &str;
 	fn table_id(&self) -> TableId;
-	/// Get's the index count for when calling `get_index_metadata(0..indexes_len())`.
-	/// Should always be at least 1 in length to be dynamically accessible.
-	fn indexes_len(&self) -> usize;
-	/// Index 0 is the primary key and should always exist
-	fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField>;
+	// /// Get's the index count for when calling `get_index_metadata(0..indexes_len())`.
+	// /// Should always be at least 1 in length to be dynamically accessible.
+	// fn indexes_len(&self) -> usize;
+	// /// Index 0 is the primary key and should always exist
+	// fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField>;
 }
 
 pub trait TableCastable: 'static {
@@ -82,7 +82,7 @@ mod tests {
 		let entities_table = database
 			.tables
 			.get_by_id(entities_storage.borrow().table_id());
-		assert_eq!(entities_table.borrow().indexes_len(), 1);
+		//assert_eq!(entities_table.borrow().indexes_len(), 1);
 		let entities_storage = entities_table
 			.borrow()
 			.get_strong_cast::<EntityTable<u64>>()
@@ -129,7 +129,7 @@ mod tests {
 		assert_eq!(entity, 1);
 		ints_storage
 			.borrow_mut()
-			.insert(&entities_storage.borrow().valid(entity).unwrap(), 42)
+			.insert(entities_storage.borrow().valid(entity).unwrap(), 42)
 			.unwrap();
 	}
 }

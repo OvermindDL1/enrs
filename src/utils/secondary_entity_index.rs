@@ -4,14 +4,14 @@ use std::marker::PhantomData;
 const PER_PAGE: usize = u8::MAX as usize + 1; // 256; // Should only have a single bit set
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum SecondaryIndexErrors<EntityType: Entity> {
+pub enum SecondaryEntityIndexErrors<EntityType: Entity> {
 	IndexAlreadyExists(EntityType),
 	IndexDoesNotExist(EntityType),
 }
 
-impl<EntityType: Entity> std::error::Error for SecondaryIndexErrors<EntityType> {
+impl<EntityType: Entity> std::error::Error for SecondaryEntityIndexErrors<EntityType> {
 	fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-		use SecondaryIndexErrors::*;
+		use SecondaryEntityIndexErrors::*;
 		match self {
 			IndexAlreadyExists(_entity) => None,
 			IndexDoesNotExist(_entity) => None,
@@ -19,9 +19,9 @@ impl<EntityType: Entity> std::error::Error for SecondaryIndexErrors<EntityType> 
 	}
 }
 
-impl<EntityType: Entity> std::fmt::Display for SecondaryIndexErrors<EntityType> {
+impl<EntityType: Entity> std::fmt::Display for SecondaryEntityIndexErrors<EntityType> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-		use SecondaryIndexErrors::*;
+		use SecondaryEntityIndexErrors::*;
 		match self {
 			IndexAlreadyExists(entity) => write!(f, "Index already exists: {:?}", entity),
 			IndexDoesNotExist(entity) => write!(f, "Index does not exist: {:?}", entity),
@@ -63,7 +63,7 @@ impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryEntityIndex<Entit
 	pub fn insert_mut(
 		&mut self,
 		entity: EntityType,
-	) -> Result<&mut IndexType, SecondaryIndexErrors<EntityType>> {
+	) -> Result<&mut IndexType, SecondaryEntityIndexErrors<EntityType>> {
 		let (page_idx, offset) = Self::page_offset(entity);
 
 		if page_idx >= self.pages.len() {
@@ -74,27 +74,30 @@ impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryEntityIndex<Entit
 
 		let location = &mut page[offset as usize];
 		if *location != self.invalid_index {
-			return Err(SecondaryIndexErrors::IndexAlreadyExists(entity));
+			return Err(SecondaryEntityIndexErrors::IndexAlreadyExists(entity));
 		}
 
 		Ok(location)
 	}
 
-	pub fn get(&self, entity: EntityType) -> Result<&IndexType, SecondaryIndexErrors<EntityType>> {
+	pub fn get(
+		&self,
+		entity: EntityType,
+	) -> Result<&IndexType, SecondaryEntityIndexErrors<EntityType>> {
 		let (page_idx, offset) = Self::page_offset(entity);
 
 		if page_idx >= self.pages.len() {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		}
 		let page = if let Some(page) = &self.pages[page_idx] {
 			page
 		} else {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		};
 
 		let location = &page[offset as usize];
 		if *location == self.invalid_index {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		}
 
 		Ok(location)
@@ -103,21 +106,21 @@ impl<EntityType: Entity, IndexType: Copy + PartialEq> SecondaryEntityIndex<Entit
 	pub fn get_mut(
 		&mut self,
 		entity: EntityType,
-	) -> Result<&mut IndexType, SecondaryIndexErrors<EntityType>> {
+	) -> Result<&mut IndexType, SecondaryEntityIndexErrors<EntityType>> {
 		let (page_idx, offset) = Self::page_offset(entity);
 
 		if page_idx >= self.pages.len() {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		}
 		let page = if let Some(page) = &mut self.pages[page_idx] {
 			page
 		} else {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		};
 
 		let location = &mut page[offset as usize];
 		if *location == self.invalid_index {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		}
 
 		Ok(location)

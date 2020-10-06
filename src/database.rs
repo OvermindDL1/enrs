@@ -137,6 +137,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
 	use crate::database::*;
+	use crate::tables::dense_entity_dynamic_paged_multi_value_table::DenseEntityDynamicPagedMultiValueTable;
 	use crate::tables::dense_entity_value_table::DenseEntityValueTable;
 	use crate::tables::entity_table::EntityTable;
 	use crate::tables::vec_entity_value_table::VecEntityValueTable;
@@ -195,6 +196,13 @@ mod tests {
 				VecEntityValueTable::<u64, i16>::builder(entities_storage.clone()),
 			)
 			.unwrap();
+		// let multi_storage = database
+		// 	.tables
+		// 	.create(
+		// 		"multi",
+		// 		DenseEntityDynamicPagedMultiValueTable::<u64>::builder(entities_storage.clone()),
+		// 	)
+		// 	.unwrap();
 		let mut entities = entities_storage.borrow_mut();
 		let entity1 = entities.insert().raw();
 		let entity2 = entities.insert().raw();
@@ -202,12 +210,13 @@ mod tests {
 		{
 			let mut ints = ints_storage.borrow_mut();
 			let mut shorts = shorts_storage.borrow_mut();
-			ints.insert(&entities.valid(entity1).unwrap(), 1).unwrap();
-			ints.insert(&entities.valid(entity2).unwrap(), 2).unwrap();
-			ints.insert(&entities.valid(entity3).unwrap(), 3).unwrap();
-			shorts.insert(&entities.valid(entity1).unwrap(), 1).unwrap();
-			shorts.insert(&entities.valid(entity2).unwrap(), 2).unwrap();
-			shorts.insert(&entities.valid(entity3).unwrap(), 3).unwrap();
+			// let mut multi = multi_storage.borrow_mut();
+			ints.insert(entities.valid(entity1).unwrap(), 1).unwrap();
+			ints.insert(entities.valid(entity2).unwrap(), 2).unwrap();
+			ints.insert(entities.valid(entity3).unwrap(), 3).unwrap();
+			shorts.insert(entities.valid(entity1).unwrap(), 1).unwrap();
+			shorts.insert(entities.valid(entity2).unwrap(), 2).unwrap();
+			shorts.insert(entities.valid(entity3).unwrap(), 3).unwrap();
 		}
 		entities.delete(entity1).unwrap();
 		entities.delete(entity3).unwrap();

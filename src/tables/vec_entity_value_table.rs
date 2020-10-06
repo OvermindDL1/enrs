@@ -1,9 +1,7 @@
 use crate::database::{DatabaseId, TableId};
 use crate::entity::Entity;
-use crate::table::fields::{Field, IndexField};
 use crate::table::{Table, TableBuilder, TableCastable};
 use crate::tables::entity_table::{EntityTable, ValidEntity};
-use bitvec::vec::BitVec;
 use smol_str::SmolStr;
 use std::any::Any;
 use std::cell::RefCell;
@@ -55,7 +53,7 @@ impl<EntityType: Entity, ValueType: 'static> VecEntityValueTable<EntityType, Val
 		self.count == 0
 	}
 
-	pub fn insert(&mut self, entity: &ValidEntity<EntityType>, value: ValueType) -> Result<(), ()> {
+	pub fn insert(&mut self, entity: ValidEntity<EntityType>, value: ValueType) -> Result<(), ()> {
 		let entity = entity.raw();
 		if self.entities.len() <= entity.idx() {
 			self.entities.resize(entity.idx() + 1, EntityType::new(0));
@@ -149,22 +147,6 @@ impl<EntityType: Entity, ValueType: 'static> Table for VecEntityValueTable<Entit
 
 	fn table_id(&self) -> TableId {
 		self.table_id
-	}
-
-	fn indexes_len(&self) -> usize {
-		1
-	}
-
-	fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField> {
-		if idx != 0 {
-			return None;
-		}
-
-		struct PrimaryKey;
-		impl Field for PrimaryKey {}
-		impl IndexField for PrimaryKey {}
-		static PRIMARY_KEY: PrimaryKey = PrimaryKey;
-		Some(&PRIMARY_KEY)
 	}
 }
 

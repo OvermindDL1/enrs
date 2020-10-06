@@ -1,1 +1,5 @@
-fn main() {}
+mod insertion;
+
+criterion::criterion_main! {
+	insertion::insertion,
+}

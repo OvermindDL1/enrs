@@ -1,9 +1,8 @@
 use crate::database::{DatabaseId, TableId};
 use crate::entity::Entity;
-use crate::table::fields::{Field, IndexField};
 use crate::table::{Table, TableBuilder, TableCastable};
 use crate::tables::entity_table::{EntityTable, ValidEntity};
-use crate::utils::secondary_entity_index::{SecondaryEntityIndex, SecondaryIndexErrors};
+use crate::utils::secondary_entity_index::{SecondaryEntityIndex, SecondaryEntityIndexErrors};
 use smol_str::SmolStr;
 use std::any::Any;
 use std::cell::RefCell;
@@ -57,9 +56,9 @@ impl<EntityType: Entity, ValueType: 'static> DenseEntityValueTable<EntityType, V
 
 	pub fn insert(
 		&mut self,
-		entity: &ValidEntity<EntityType>,
+		entity: ValidEntity<EntityType>,
 		value: ValueType,
-	) -> Result<(), SecondaryIndexErrors<EntityType>> {
+	) -> Result<(), SecondaryEntityIndexErrors<EntityType>> {
 		let location = self.reverse.insert_mut(entity.raw())?;
 		*location = self.entities.len();
 		self.entities.push(entity.raw());
@@ -67,10 +66,13 @@ impl<EntityType: Entity, ValueType: 'static> DenseEntityValueTable<EntityType, V
 		Ok(())
 	}
 
-	pub fn delete(&mut self, entity: EntityType) -> Result<(), SecondaryIndexErrors<EntityType>> {
+	pub fn delete(
+		&mut self,
+		entity: EntityType,
+	) -> Result<(), SecondaryEntityIndexErrors<EntityType>> {
 		let location_mut = self.reverse.get_mut(entity)?;
 		if self.entities[*location_mut] != entity {
-			return Err(SecondaryIndexErrors::IndexDoesNotExist(entity));
+			return Err(SecondaryEntityIndexErrors::IndexDoesNotExist(entity));
 		}
 		let location = *location_mut;
 		*location_mut = usize::MAX;
@@ -150,22 +152,6 @@ impl<EntityType: Entity, ValueType: 'static> Table
 
 	fn table_id(&self) -> TableId {
 		self.table_id
-	}
-
-	fn indexes_len(&self) -> usize {
-		1
-	}
-
-	fn get_index_metadata(&self, idx: usize) -> Option<&dyn IndexField> {
-		if idx != 0 {
-			return None;
-		}
-
-		struct PrimaryKey;
-		impl Field for PrimaryKey {}
-		impl IndexField for PrimaryKey {}
-		static PRIMARY_KEY: PrimaryKey = PrimaryKey;
-		Some(&PRIMARY_KEY)
 	}
 }
 
