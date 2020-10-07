@@ -7,15 +7,17 @@ use crate::utils::unique_hasher::UniqueHasherBuilder;
 use arrayvec::ArrayVec;
 use indexmap::map::IndexMap;
 use owning_ref::OwningHandle;
+use smallvec::SmallVec;
 use smol_str::SmolStr;
 use std::any::{Any, TypeId};
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{BorrowMutError, Ref, RefCell, RefMut};
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum DenseEntityDynamicPagedMultiValueTableErrors<EntityType: Entity> {
 	SecondaryIndexError(SecondaryEntityIndexErrors<EntityType>),
+	BorrowMutError(BorrowMutError),
 	StorageDoesNotExistInGroup(usize, TypeId),
 	StorageAlreadyExistsInGroup(usize, TypeId),
 	EntityAlreadyExistsInStorage,
@@ -32,6 +34,7 @@ impl<EntityType: Entity> std::error::Error
 		use DenseEntityDynamicPagedMultiValueTableErrors::*;
 		match self {
 			SecondaryIndexError(source) => Some(source),
+			BorrowMutError(source) => Some(source),
 			StorageDoesNotExistInGroup(_group, _tid) => None,
 			StorageAlreadyExistsInGroup(_group, _tid) => None,
 			ComponentStorageDoesNotExist(_name) => None,
@@ -50,6 +53,7 @@ impl<EntityType: Entity> std::fmt::Display
 		use DenseEntityDynamicPagedMultiValueTableErrors::*;
 		match self {
 			SecondaryIndexError(_source) => write!(f, "SecondaryIndexError"),
+			BorrowMutError(_source) => write!(f, "already borrowed"),
 			StorageDoesNotExistInGroup(group, tid) => {
 				write!(f, "Storage does not exist in group {}: {:?}", group, tid)
 			}
@@ -88,6 +92,14 @@ impl<EntityType: Entity> From<SecondaryEntityIndexErrors<EntityType>>
 	}
 }
 
+impl<EntityType: Entity> From<BorrowMutError>
+	for DenseEntityDynamicPagedMultiValueTableErrors<EntityType>
+{
+	fn from(source: BorrowMutError) -> Self {
+		DenseEntityDynamicPagedMultiValueTableErrors::BorrowMutError(source)
+	}
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComponentLocations {
 	group: usize,
@@ -106,6 +118,7 @@ pub trait DynDensePagedData {
 	fn get_strong(&self) -> Rc<RefCell<dyn DynDensePagedData>>;
 	fn get_idx(&self) -> usize;
 	fn ensure_group_count(&mut self, group_count: usize);
+	fn swap_remove(&mut self, group: usize, index: usize);
 }
 
 trait DynDensePagedDataCastable: 'static {
@@ -149,6 +162,10 @@ impl<ValueType: 'static> DynDensePagedData for DensePagedData<ValueType> {
 
 	fn ensure_group_count(&mut self, group_count: usize) {
 		self.data.resize_with(group_count, || Vec::new());
+	}
+
+	fn swap_remove(&mut self, group: usize, index: usize) {
+		self.data[group].swap_remove(index);
 	}
 }
 
@@ -301,15 +318,22 @@ struct QueryTypedPagedKey<'a> {
 struct QueryTypedPagedKeyBoxed {
 	include: Box<[TypeId]>,
 	exclude: Box<[TypeId]>,
+	include_storage_idxs: Box<[usize]>,
 }
 
 impl<'a> QueryTypedPagedKey<'a> {
-	fn to_box(self) -> QueryTypedPagedKeyBoxed {
+	fn to_box(
+		self,
+		storages: &IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
+	) -> QueryTypedPagedKeyBoxed {
 		QueryTypedPagedKeyBoxed {
-			// read_only: self.read_only.to_vec().into_boxed_slice(),
-			// read_write: self.read_write.to_vec().into_boxed_slice(),
 			include: self.include.into(),
 			exclude: self.exclude.into(),
+			include_storage_idxs: self
+				.include
+				.iter()
+				.map(|tid| storages.get_full(tid).unwrap().0)
+				.collect(),
 		}
 	}
 }
@@ -420,7 +444,7 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 		let loc = *location;
 		*location = ComponentLocations::INVALID;
 		entities_group.swap_remove(loc.index);
-		if entities_group.len() > 0 {
+		if entities_group.len() > loc.index {
 			let replacement_entity = entities_group[loc.index];
 			reverse
 				.get_mut(replacement_entity)
@@ -457,7 +481,10 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 		}
 	}
 
-	pub fn group_query<VTs: ValueTypes>(&mut self) -> Result<GroupQuery<EntityType, VTs>, ()> {
+	pub fn group_query<VTs: ValueTypes>(
+		&mut self,
+	) -> Result<GroupQuery<EntityType, VTs>, DenseEntityDynamicPagedMultiValueTableErrors<EntityType>>
+	{
 		let group = if let Some(group) = self.group_queries.get(&TypeId::of::<VTs::Raw>()) {
 			group
 				.as_any()
@@ -480,7 +507,10 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 
 	pub fn group_insert<VTs: InsertValueTypes>(
 		&mut self,
-	) -> Result<GroupInsert<EntityType, VTs>, ()> {
+	) -> Result<
+		GroupInsert<EntityType, VTs>,
+		DenseEntityDynamicPagedMultiValueTableErrors<EntityType>,
+	> {
 		let include_tids = VTs::get_include_type_ids();
 		let exclude_tids = VTs::get_exclude_type_ids();
 		let key = QueryTypedPagedKey {
@@ -512,31 +542,87 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 				_phantom: PhantomData,
 			};
 			self.group_inserts
-				.insert(key.to_box(), Some(Box::new(group.clone())));
+				.insert(key.to_box(&self.storages), Some(Box::new(group.clone())));
 			self.ensure_group_count_on_storages();
 			group
 		};
 		Ok(group)
 	}
 
-	// pub fn insert_into_group<VTs: ValueTypes>(
-	// 	&mut self,
-	// 	locked: &mut GroupLock<EntityType, VTs>,
-	// 	entity: ValidEntity<EntityType>,
-	// 	data: VTs::MoveData,
-	// ) -> Result<(), DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
-	// 	if locked.group_page == usize::MAX {
-	// 		// self.pages.
-	// 	}
-	// 	let location = Self::insert_valid_location_mut(
-	// 		&mut self.reverse,
-	// 		&mut self.entities,
-	// 		entity.raw(),
-	// 		locked.group,
-	// 	)?;
-	// 	VTs::push(&mut locked.storage_locked, locked.group, data);
-	// 	Ok(())
-	// }
+	pub fn delete(
+		&mut self,
+		entity: ValidEntity<EntityType>,
+	) -> Result<(), DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
+		let location =
+			Self::remove_valid_location(&mut self.reverse, &mut self.entities, entity.raw())?;
+		let storage_idxs = &self
+			.group_inserts
+			.get_index(location.group)
+			.unwrap()
+			.0
+			.include_storage_idxs;
+		for idx in storage_idxs.iter().copied() {
+			self.storages[idx]
+				.borrow_mut()
+				.swap_remove(location.group, location.index);
+		}
+
+		Ok(())
+	}
+
+	pub fn lock(
+		&mut self,
+	) -> Result<AllLock<EntityType>, DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
+		let mut storages = SmallVec::with_capacity(self.storages.len());
+		for storage in self.storages.values_mut() {
+			storages.push(OwningHandle::new_with_fn(storage.clone(), |storage| {
+				// This `unsafe` is required because OwningHandle doesn't handle dyn traits on an inner type as it requires Sized needlessly
+				unsafe { RefCell::borrow_mut(&*storage) }
+			}));
+		}
+		Ok(AllLock {
+			reverse: &mut self.reverse,
+			entities: &mut self.entities,
+			group_inserts: &mut self.group_inserts,
+			storages,
+		})
+	}
+}
+
+pub struct AllLock<'a, EntityType: Entity> {
+	reverse: &'a mut SecondaryEntityIndex<EntityType, ComponentLocations>,
+	entities: &'a mut Vec<Vec<EntityType>>,
+	group_inserts: &'a IndexMap<QueryTypedPagedKeyBoxed, Option<Box<dyn DynGroup>>>,
+	storages: SmallVec<
+		[OwningHandle<
+			Rc<RefCell<dyn DynDensePagedData>>,
+			RefMut<'a, dyn DynDensePagedData + 'static>,
+		>; 32],
+	>, // If this is worth increasing then please request with a reason
+}
+
+impl<'a, EntityType: Entity> AllLock<'a, EntityType> {
+	pub fn delete(
+		&mut self,
+		entity: ValidEntity<EntityType>,
+	) -> Result<(), DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
+		let location = DenseEntityDynamicPagedMultiValueTable::remove_valid_location(
+			self.reverse,
+			self.entities,
+			entity.raw(),
+		)?;
+		let storage_idxs = &self
+			.group_inserts
+			.get_index(location.group)
+			.unwrap()
+			.0
+			.include_storage_idxs;
+		for idx in storage_idxs.iter().copied() {
+			self.storages[idx].swap_remove(location.group, location.index);
+		}
+
+		Ok(())
+	}
 }
 
 pub trait ValueTypes: 'static {
@@ -550,7 +636,7 @@ pub trait ValueTypes: 'static {
 }
 
 // Ask if this should be increased in size, but honestly, more tables should probably be used instead
-type TypeIdCacheVec = ArrayVec<[TypeId; 31]>;
+type TypeIdCacheVec = ArrayVec<[TypeId; 32]>;
 
 pub trait InsertValueTypes: ValueTypes {
 	fn fill_include_type_ids(arr: &mut TypeIdCacheVec);
@@ -726,8 +812,8 @@ impl<EntityType: Entity> TableBuilder for DenseEntityPagedMultiValueTableBuilder
 		let another_this = this.clone();
 		let _id = entities.on_delete_entity(Box::new(move |_entity_table_id, entity| {
 			if let Ok(mut deleter) = another_this.try_borrow_mut() {
-				//deleter.delete(entity.raw()).expect("Unknown deletion error while deleting valid entity")
-				todo!("Add support to delete components");
+				// Ignore the entity does not exist error
+				let _ = deleter.delete(entity);// .expect("Unknown deletion error while deleting valid entity");
 			} else {
 				panic!("DenseEntityDynamicPagedMultiValueTable<{}> already locked while deleting an entity, all tables must be free when deleting an Entity", std::any::type_name::<EntityType>());
 			};
@@ -794,7 +880,7 @@ mod tests {
 	}
 
 	#[test]
-	fn insertions() {
+	fn insertions_and_deletions() {
 		let (_database, entities_storage, multi_storage) = basic_setup();
 		let mut entities = entities_storage.borrow_mut();
 		let mut multi = multi_storage.borrow_mut();
@@ -807,6 +893,7 @@ mod tests {
 			.lock(&mut multi)
 			.insert(entity1, tl![])
 			.unwrap();
+		let entity1 = entity1.raw();
 		let entity2 = entities.insert();
 		single_inserter
 			.lock(&mut multi)
@@ -816,5 +903,28 @@ mod tests {
 			.lock(&mut multi)
 			.insert(entity2, tl![])
 			.is_err());
+		{
+			let mut multi_locked = multi.lock().unwrap();
+			multi_locked.delete(entity2).unwrap();
+		}
+		multi.delete(entities.valid(entity1).unwrap()).unwrap();
+		let entity1 = entities.insert().raw();
+		let entity2 = entities.insert().raw();
+		let entity3 = entities.insert().raw();
+		null_inserter
+			.lock(&mut multi)
+			.insert(entities.valid(entity1).unwrap(), tl![])
+			.unwrap();
+		null_inserter
+			.lock(&mut multi)
+			.insert(entities.valid(entity2).unwrap(), tl![])
+			.unwrap();
+		null_inserter
+			.lock(&mut multi)
+			.insert(entities.valid(entity3).unwrap(), tl![])
+			.unwrap();
+		multi.delete(entities.valid(entity1).unwrap()).unwrap();
+		multi.delete(entities.valid(entity2).unwrap()).unwrap();
+		multi.delete(entities.valid(entity3).unwrap()).unwrap();
 	}
 }

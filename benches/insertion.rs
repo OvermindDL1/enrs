@@ -43,8 +43,13 @@ fn entity_table(c: &mut Criterion) {
 macro_rules! entity_storage_insert_TYPE {
 	($BENCH_NAME:ident, $STORAGE:ty, $VALUE_CB:expr) => {
 		fn $BENCH_NAME(c: &mut Criterion) {
-			let mut group =
-				c.benchmark_group(format!("insertion/{}", std::any::type_name::<$STORAGE>()));
+			let mut group = c.benchmark_group(format!(
+				"insertion/{}",
+				std::any::type_name::<$STORAGE>()
+					.split("::")
+					.last()
+					.unwrap()
+			));
 			for times in TIMES {
 				for count in [1, 4, 8, 16].iter() {
 					group.bench_with_input(
@@ -103,61 +108,82 @@ entity_storage_insert_TYPE!(dense_entity_value_bench, DenseEntityValueTable<Enti
 entity_storage_insert_TYPE!(vec_entity_value_bench, VecEntityValueTable<EntityType, u64>, |e: ValidEntity<EntityType>| e.raw() as u64);
 
 macro_rules! dense_entity_multi_storage_insert_TYPE {
-	($BENCH_NAME:ident, $STORAGE:ty, $VALUE_CB:expr) => {
+	($BENCH_NAME:ident, $CCOUNT:expr, $STORAGE:ty, $VALUE_CB:expr) => {
 		fn $BENCH_NAME(c: &mut Criterion) {
 			let mut group = c.benchmark_group(format!(
 				"insertion/{}",
 				std::any::type_name::<DenseEntityDynamicPagedMultiValueTable<EntityType>>()
+					.split("::")
+					.last()
+					.unwrap()
 			));
 			for times in TIMES {
-				for count in [1, 4, 8, 16].iter() {
-					group.bench_with_input(
-						format!("{}/{}", times, count),
-						&(times, count),
-						|b: &mut Bencher<_>, (&times, &count)| {
-							let mut database = Database::new();
-							let entities_storage = database
-								.tables
-								.create(
-									"entities",
-									EntityTable::<EntityType>::builder_with_capacity(times),
-								)
-								.unwrap();
-							let storage = database
-								.tables
-								.create(
-									"multi",
-									DenseEntityDynamicPagedMultiValueTable::builder_with_capacity(
-										entities_storage.clone(),
-										times,
-									),
-								)
-								.unwrap();
-							//let mut multi = storage.borrow_mut();
-							let mut single_inserter =
-								storage.borrow_mut().group_insert::<$STORAGE>().unwrap();
-							//let mut entities = entities_storage.borrow_mut();
-							//let mut inserter = single_inserter.lock(&mut *multi);
-							let new = $VALUE_CB;
-							b.iter_batched(
-								|| {
-									entities_storage.borrow_mut().clear().unwrap();
-									()
-								},
-								|()| {
-									let mut entities = entities_storage.borrow_mut();
-									let mut multi = storage.borrow_mut();
-									let mut inserter = single_inserter.lock(&mut *multi);
-									for _ in 0..times {
-										let entity = entities.insert();
-										inserter.insert(entity, new(entity.raw()));
-									}
-								},
-								BatchSize::PerIteration,
-							);
-						},
-					);
-				}
+				group.bench_with_input(
+					format!("{}/{}", $CCOUNT, times),
+					times,
+					|b: &mut Bencher<_>, &times| {
+						let mut database = Database::new();
+						let entities_storage = database
+							.tables
+							.create(
+								"entities",
+								EntityTable::<EntityType>::builder_with_capacity(times),
+							)
+							.unwrap();
+						let storage = database
+							.tables
+							.create(
+								"multi",
+								DenseEntityDynamicPagedMultiValueTable::builder_with_capacity(
+									entities_storage.clone(),
+									times,
+								),
+							)
+							.unwrap();
+						//let mut multi = storage.borrow_mut();
+						let mut single_inserter =
+							storage.borrow_mut().group_insert::<$STORAGE>().unwrap();
+						//let mut entities = entities_storage.borrow_mut();
+						//let mut inserter = single_inserter.lock(&mut *multi);
+						let new = $VALUE_CB;
+						b.iter_batched(
+							|| {
+								entities_storage.borrow_mut().clear().unwrap();
+								// let single_inserter = single_inserter.clone();
+								// let inserter = owning_ref::OwningHandle::new_with_fn(
+								// 	owning_ref::OwningHandle::new_mut(storage.clone()),
+								// 	move |multi| unsafe {
+								// 		owning_ref::OwningHandle::new_with_fn(
+								// 			Box::new(single_inserter.clone()),
+								// 			|ins| {
+								// 				Box::new(GroupInsert::<u64, $STORAGE>::lock(
+								// 					&mut *(ins as *mut _),
+								// 					&mut *(multi as *mut _),
+								// 				))
+								// 			},
+								// 		)
+								// 		// Box::new(
+								// 		// 	single_inserter.lock(&mut *(multi as *mut _)),
+								// 		// )
+								// 	},
+								// );
+								// inserter
+								()
+							},
+							//|mut inserter| {
+							|()| {
+								let mut entities = entities_storage.borrow_mut();
+								let mut multi = storage.borrow_mut();
+								let mut inserter = single_inserter.lock(&mut *multi);
+								for _ in 0..times {
+									let entity = entities.insert();
+									let _ = inserter.insert(entity, new(entity.raw()));
+								}
+							},
+							BatchSize::PerIteration,
+						);
+					},
+				);
 			}
 		}
 	};
@@ -187,7 +213,43 @@ fn s<T>(data: u64) -> S<T> {
 }
 
 dense_entity_multi_storage_insert_TYPE!(
+	dense_entity_dynamic_paged_multi_value_bench_1,
+	1,
+	TL![&mut S0],
+	|e| tl![s::<[i8; 0]>(e),]
+);
+
+dense_entity_multi_storage_insert_TYPE!(
+	dense_entity_dynamic_paged_multi_value_bench_4,
+	4,
+	TL![&mut S0, &mut S1, &mut S2, &mut S3],
+	|e| tl![
+		s::<[i8; 0]>(e),
+		s::<[i8; 1]>(e),
+		s::<[i8; 2]>(e),
+		s::<[i8; 3]>(e),
+	]
+);
+
+dense_entity_multi_storage_insert_TYPE!(
+	dense_entity_dynamic_paged_multi_value_bench_8,
+	8,
+	TL![&mut S0, &mut S1, &mut S2, &mut S3, &mut S4, &mut S5, &mut S6, &mut S7],
+	|e| tl![
+		s::<[i8; 0]>(e),
+		s::<[i8; 1]>(e),
+		s::<[i8; 2]>(e),
+		s::<[i8; 3]>(e),
+		s::<[i8; 4]>(e),
+		s::<[i8; 5]>(e),
+		s::<[i8; 6]>(e),
+		s::<[i8; 7]>(e),
+	]
+);
+
+dense_entity_multi_storage_insert_TYPE!(
 	dense_entity_dynamic_paged_multi_value_bench_16,
+	16,
 	TL![
 		&mut S0, &mut S1, &mut S2, &mut S3, &mut S4, &mut S5, &mut S6, &mut S7, &mut S8, &mut S9,
 		&mut S10, &mut S11, &mut S12, &mut S13, &mut S14, &mut S15
@@ -218,7 +280,10 @@ criterion_group! {
 	//targets =
 	insertion,
 		entity_table, dense_entity_value_bench, vec_entity_value_bench,
-		dense_entity_dynamic_paged_multi_value_bench_16
+		dense_entity_dynamic_paged_multi_value_bench_1,
+		dense_entity_dynamic_paged_multi_value_bench_4,
+		dense_entity_dynamic_paged_multi_value_bench_8,
+		dense_entity_dynamic_paged_multi_value_bench_16,
 	//	storage_new_u64_nil, storage_new_u64_i64,
 	//	storage_insert_u64_nil, storage_insert_u64_128,
 	//	storage_lookup_u64_nil, storage_lookup_u64_128,

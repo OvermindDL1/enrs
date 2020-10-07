@@ -737,7 +737,7 @@ impl<EntityType: Entity> SparseTypedPagedMap<EntityType> {
 		let loc = *location;
 		*location = ComponentLocations::INVALID;
 		entities_group.swap_remove(loc.index);
-		if entities_group.len() > 0 {
+		if entities_group.len() > loc.index {
 			let replacement_entity = entities_group[loc.index];
 			reverse
 				.get_mut(replacement_entity)
