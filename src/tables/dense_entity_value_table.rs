@@ -122,7 +122,8 @@ impl<EntityType: Entity, ValueType: 'static> TableBuilder
 		let another_this = this.clone();
 		let _id = entities.on_delete_entity(Box::new(move |_entity_table_id, entity| {
 			if let Ok(mut deleter) = another_this.try_borrow_mut() {
-				deleter.delete(entity.raw()).expect("Unknown deletion error while deleting valid entity")
+				// Don't care if it didn't exist
+				let _ = deleter.delete(entity.raw()); // .expect("Unknown deletion error while deleting valid entity")
 			} else {
 				panic!("DenseEntityTable<{}, {}> already locked while deleting an entity, all tables must be free when deleting an Entity", std::any::type_name::<EntityType>(), std::any::type_name::<ValueType>());
 			};

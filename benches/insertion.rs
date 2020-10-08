@@ -3,41 +3,55 @@ use enrs::database::*;
 use enrs::tables::*;
 use enrs::{tl, TL};
 use std::marker::PhantomData;
+use std::time::Instant;
 
 type EntityType = u64;
 
 const TIMES: &[usize] = &[10_000];
 
 fn entity_table(c: &mut Criterion) {
-	let mut group = c.benchmark_group(format!(
-		"insertion/{}",
-		std::any::type_name::<EntityTable<EntityType>>()
-	));
-	for times in TIMES {
-		group.bench_with_input(format!("{}", times), times, |b: &mut Bencher<_>, &times| {
+	let mut group = c.benchmark_group("insertion");
+	let table_name = std::any::type_name::<EntityTable<EntityType>>();
+	group.bench_function(table_name, move |b| {
+		b.iter_custom(|times| {
 			let mut database = Database::new();
 			let entities_storage = database
 				.tables
 				.create(
 					"entities",
-					EntityTable::<EntityType>::builder_with_capacity(times),
+					EntityTable::<EntityType>::builder_with_capacity(times as usize),
 				)
 				.unwrap();
-			b.iter_batched(
-				|| {
-					let mut entities = entities_storage.borrow_mut();
-					entities.clear().unwrap();
-					entities
-				},
-				|mut entities| {
-					for _ in 0..times {
-						entities.insert();
-					}
-				},
-				BatchSize::PerIteration,
-			);
+			let mut entities = entities_storage.borrow_mut();
+			let start = Instant::now();
+			for _i in 0..times {
+				black_box(entities.insert());
+			}
+			start.elapsed()
 		});
-	}
+	});
+	group.bench_function(format!("{}/recycled", table_name), move |b| {
+		b.iter_custom(|times| {
+			let mut database = Database::new();
+			let entities_storage = database
+				.tables
+				.create(
+					"entities",
+					EntityTable::<EntityType>::builder_with_capacity(times as usize),
+				)
+				.unwrap();
+			let mut entities = entities_storage.borrow_mut();
+			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			for e in entity_vec {
+				black_box(entities.delete(e));
+			}
+			let start = Instant::now();
+			for _i in 0..times {
+				black_box(entities.insert());
+			}
+			start.elapsed()
+		});
+	});
 }
 
 macro_rules! entity_storage_insert_TYPE {
@@ -189,7 +203,7 @@ macro_rules! dense_entity_multi_storage_insert_TYPE {
 	};
 }
 
-struct S<T>(u64, PhantomData<T>);
+struct S<T>(f32, PhantomData<T>);
 
 type S0 = S<[i8; 0]>;
 type S1 = S<[i8; 1]>;
@@ -208,7 +222,7 @@ type S13 = S<[i8; 13]>;
 type S14 = S<[i8; 14]>;
 type S15 = S<[i8; 15]>;
 
-fn s<T>(data: u64) -> S<T> {
+fn s<T>(data: f32) -> S<T> {
 	S(data, PhantomData)
 }
 
@@ -216,35 +230,44 @@ dense_entity_multi_storage_insert_TYPE!(
 	dense_entity_dynamic_paged_multi_value_bench_1,
 	1,
 	TL![&mut S0],
-	|e| tl![s::<[i8; 0]>(e),]
+	|e| {
+		let e = 0.0;
+		tl![s::<[i8; 0]>(e),]
+	}
 );
 
 dense_entity_multi_storage_insert_TYPE!(
 	dense_entity_dynamic_paged_multi_value_bench_4,
 	4,
 	TL![&mut S0, &mut S1, &mut S2, &mut S3],
-	|e| tl![
-		s::<[i8; 0]>(e),
-		s::<[i8; 1]>(e),
-		s::<[i8; 2]>(e),
-		s::<[i8; 3]>(e),
-	]
+	|e| {
+		let e = 0.0;
+		tl![
+			s::<[i8; 0]>(e),
+			s::<[i8; 1]>(e),
+			s::<[i8; 2]>(e),
+			s::<[i8; 3]>(e),
+		]
+	}
 );
 
 dense_entity_multi_storage_insert_TYPE!(
 	dense_entity_dynamic_paged_multi_value_bench_8,
 	8,
 	TL![&mut S0, &mut S1, &mut S2, &mut S3, &mut S4, &mut S5, &mut S6, &mut S7],
-	|e| tl![
-		s::<[i8; 0]>(e),
-		s::<[i8; 1]>(e),
-		s::<[i8; 2]>(e),
-		s::<[i8; 3]>(e),
-		s::<[i8; 4]>(e),
-		s::<[i8; 5]>(e),
-		s::<[i8; 6]>(e),
-		s::<[i8; 7]>(e),
-	]
+	|e| {
+		let e = 0.0;
+		tl![
+			s::<[i8; 0]>(e),
+			s::<[i8; 1]>(e),
+			s::<[i8; 2]>(e),
+			s::<[i8; 3]>(e),
+			s::<[i8; 4]>(e),
+			s::<[i8; 5]>(e),
+			s::<[i8; 6]>(e),
+			s::<[i8; 7]>(e),
+		]
+	}
 );
 
 dense_entity_multi_storage_insert_TYPE!(
@@ -254,24 +277,27 @@ dense_entity_multi_storage_insert_TYPE!(
 		&mut S0, &mut S1, &mut S2, &mut S3, &mut S4, &mut S5, &mut S6, &mut S7, &mut S8, &mut S9,
 		&mut S10, &mut S11, &mut S12, &mut S13, &mut S14, &mut S15
 	],
-	|e| tl![
-		s::<[i8; 0]>(e),
-		s::<[i8; 1]>(e),
-		s::<[i8; 2]>(e),
-		s::<[i8; 3]>(e),
-		s::<[i8; 4]>(e),
-		s::<[i8; 5]>(e),
-		s::<[i8; 6]>(e),
-		s::<[i8; 7]>(e),
-		s::<[i8; 8]>(e),
-		s::<[i8; 9]>(e),
-		s::<[i8; 10]>(e),
-		s::<[i8; 11]>(e),
-		s::<[i8; 12]>(e),
-		s::<[i8; 13]>(e),
-		s::<[i8; 14]>(e),
-		s::<[i8; 15]>(e)
-	]
+	|e| {
+		let e = 0.0;
+		tl![
+			s::<[i8; 0]>(e),
+			s::<[i8; 1]>(e),
+			s::<[i8; 2]>(e),
+			s::<[i8; 3]>(e),
+			s::<[i8; 4]>(e),
+			s::<[i8; 5]>(e),
+			s::<[i8; 6]>(e),
+			s::<[i8; 7]>(e),
+			s::<[i8; 8]>(e),
+			s::<[i8; 9]>(e),
+			s::<[i8; 10]>(e),
+			s::<[i8; 11]>(e),
+			s::<[i8; 12]>(e),
+			s::<[i8; 13]>(e),
+			s::<[i8; 14]>(e),
+			s::<[i8; 15]>(e)
+		]
+	}
 );
 
 criterion_group! {
