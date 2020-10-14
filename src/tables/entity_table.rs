@@ -118,8 +118,9 @@ impl<EntityType: Entity> EntityTable<EntityType> {
 			ValidEntity(entity, PhantomData)
 		} else {
 			let head = self.destroyed.idx();
-			// TODO:  This should be safe to make unsafe and use `get_unchecked`
-			let head_entity = &mut self.entities[head];
+			// This unsafe is safe because the head is always in a valid index for a valid `self.destroyed`
+			// let head_entity = &mut self.entities[head];
+			let head_entity = unsafe { self.entities.get_unchecked_mut(head) };
 			self.destroyed = EntityType::new(head_entity.idx()); // New head of destroyed list
 			ValidEntity(*head_entity.set_idx(head), PhantomData)
 		}

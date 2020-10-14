@@ -1,4 +1,5 @@
 mod insertion;
+mod other_ecs;
 mod storages;
 
 mod components {
@@ -89,5 +90,6 @@ mod components {
 criterion::criterion_main! {
 	storages::entity_table::benchmarks,
 	storages::dense_entity_dynamic_paged_multi_value_table::benchmarks,
+	other_ecs::shipyard::benchmarks
 	//insertion::insertion,
 }

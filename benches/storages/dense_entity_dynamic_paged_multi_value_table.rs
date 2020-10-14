@@ -154,6 +154,66 @@ fn benchmark(c: &mut Criterion) {
 			start.elapsed()
 		});
 	});
+	group.bench_function("insert/8/no-create-entity", move |b| {
+		b.iter_custom(|times| {
+			let (mut database, entities_storage, multi_storage) = setup(times);
+			let mut entities = entities_storage.borrow_mut();
+			let mut multi = multi_storage.borrow_mut();
+			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let mut inserter = multi.group_insert::<Type8>().unwrap();
+			let mut lock = inserter.lock(&mut multi);
+			let start = Instant::now();
+			for e in entity_vec {
+				black_box(lock.insert(entities.valid(e).unwrap(), type8_new(e)));
+			}
+			start.elapsed()
+		});
+	});
+	group.bench_function("insert/8/with-create-entity", move |b| {
+		b.iter_custom(|times| {
+			let (mut database, entities_storage, multi_storage) = setup(times);
+			let mut entities = entities_storage.borrow_mut();
+			let mut multi = multi_storage.borrow_mut();
+			let mut inserter = multi.group_insert::<Type8>().unwrap();
+			let mut lock = inserter.lock(&mut multi);
+			let start = Instant::now();
+			for _i in 0..times {
+				let e = entities.insert();
+				black_box(lock.insert(e, type8_new(e.raw())));
+			}
+			start.elapsed()
+		});
+	});
+	group.bench_function("insert/16/no-create-entity", move |b| {
+		b.iter_custom(|times| {
+			let (mut database, entities_storage, multi_storage) = setup(times);
+			let mut entities = entities_storage.borrow_mut();
+			let mut multi = multi_storage.borrow_mut();
+			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let mut inserter = multi.group_insert::<Type16>().unwrap();
+			let mut lock = inserter.lock(&mut multi);
+			let start = Instant::now();
+			for e in entity_vec {
+				black_box(lock.insert(entities.valid(e).unwrap(), type16_new(e)));
+			}
+			start.elapsed()
+		});
+	});
+	group.bench_function("insert/16/with-create-entity", move |b| {
+		b.iter_custom(|times| {
+			let (mut database, entities_storage, multi_storage) = setup(times);
+			let mut entities = entities_storage.borrow_mut();
+			let mut multi = multi_storage.borrow_mut();
+			let mut inserter = multi.group_insert::<Type16>().unwrap();
+			let mut lock = inserter.lock(&mut multi);
+			let start = Instant::now();
+			for _i in 0..times {
+				let e = entities.insert();
+				black_box(lock.insert(e, type16_new(e.raw())));
+			}
+			start.elapsed()
+		});
+	});
 	group.bench_function("delete/1/components-only", move |b| {
 		b.iter_custom(|times| {
 			let (mut database, entities_storage, multi_storage) = setup(times);
