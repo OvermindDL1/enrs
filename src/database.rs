@@ -137,7 +137,6 @@ impl Database {
 #[cfg(test)]
 mod tests {
 	use crate::database::*;
-	use crate::tables::dense_entity_dynamic_paged_multi_value_table::DenseEntityDynamicPagedMultiValueTable;
 	use crate::tables::dense_entity_value_table::DenseEntityValueTable;
 	use crate::tables::entity_table::EntityTable;
 	use crate::tables::vec_entity_value_table::VecEntityValueTable;

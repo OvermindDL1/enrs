@@ -259,196 +259,28 @@ fn benchmark(c: &mut Criterion) {
 	delete_benchmark!(group, 4, Type4, type4_new);
 	delete_benchmark!(group, 8, Type8, type8_new);
 	delete_benchmark!(group, 16, Type16, type16_new);
-	// group.bench_function("delete/4/components-only", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let (mut database, entities_storage, multi_storage) = setup(times);
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let mut multi = multi_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		let mut inserter = multi.group_insert::<Type4>().unwrap();
-	// 		{
-	// 			let mut lock = inserter.lock(&mut multi);
-	// 			for &e in entity_vec.iter() {
-	// 				lock.insert(entities.valid(e).unwrap(), type4_new(e))
-	// 					.unwrap();
-	// 			}
-	// 		}
-	// 		let mut lock = multi.lock().unwrap();
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = lock.delete(entities.valid(e).unwrap());
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("delete/4/entity-and-components", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let (mut database, entities_storage, multi_storage) = setup(times);
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec = {
-	// 			let mut multi = multi_storage.borrow_mut();
-	// 			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 			let mut inserter = multi.group_insert::<Type4>().unwrap();
-	// 			let mut lock = inserter.lock(&mut multi);
-	// 			for &e in entity_vec.iter() {
-	// 				lock.insert(entities.valid(e).unwrap(), type4_new(e))
-	// 					.unwrap();
-	// 			}
-	// 			entity_vec
-	// 		};
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = entities.delete(e);
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("insert/recycled", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let mut database = Database::new();
-	// 		let entities_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"entities",
-	// 				EntityTable::<EntityType>::builder_with_capacity(times as usize),
-	// 			)
-	// 			.unwrap();
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		for e in entity_vec {
-	// 			let _ = black_box(entities.delete(e));
-	// 		}
-	// 		let start = Instant::now();
-	// 		for _i in 0..times {
-	// 			black_box(entities.insert());
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("delete", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let mut database = Database::new();
-	// 		let entities_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"entities",
-	// 				EntityTable::<EntityType>::builder_with_capacity(times as usize),
-	// 			)
-	// 			.unwrap();
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = black_box(entities.delete(e));
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("delete/multi", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let mut database = Database::new();
-	// 		let entities_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"entities",
-	// 				EntityTable::<EntityType>::builder_with_capacity(times as usize),
-	// 			)
-	// 			.unwrap();
-	// 		let _multi_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"multi",
-	// 				DenseEntityDynamicPagedMultiValueTable::<u64>::builder(
-	// 					entities_storage.clone(),
-	// 				),
-	// 			)
-	// 			.unwrap();
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = black_box(entities.delete(e));
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("delete/vec-dense-multi", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let mut database = Database::new();
-	// 		let entities_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"entities",
-	// 				EntityTable::<EntityType>::builder_with_capacity(times as usize),
-	// 			)
-	// 			.unwrap();
-	// 		let _multi_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"multi",
-	// 				DenseEntityDynamicPagedMultiValueTable::<u64>::builder(
-	// 					entities_storage.clone(),
-	// 				),
-	// 			)
-	// 			.unwrap();
-	// 		let _ints_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"ints",
-	// 				DenseEntityValueTable::<u64, isize>::builder(entities_storage.clone()),
-	// 			)
-	// 			.unwrap();
-	// 		let _shorts_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"shorts",
-	// 				VecEntityValueTable::<u64, i16>::builder(entities_storage.clone()),
-	// 			)
-	// 			.unwrap();
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = black_box(entities.delete(e));
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
-	// group.bench_function("delete/dense-multi", move |b| {
-	// 	b.iter_custom(|times| {
-	// 		let mut database = Database::new();
-	// 		let entities_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"entities",
-	// 				EntityTable::<EntityType>::builder_with_capacity(times as usize),
-	// 			)
-	// 			.unwrap();
-	// 		let _multi_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"multi",
-	// 				DenseEntityDynamicPagedMultiValueTable::<u64>::builder(
-	// 					entities_storage.clone(),
-	// 				),
-	// 			)
-	// 			.unwrap();
-	// 		let _ints_storage = database
-	// 			.tables
-	// 			.create(
-	// 				"ints",
-	// 				DenseEntityValueTable::<u64, isize>::builder(entities_storage.clone()),
-	// 			)
-	// 			.unwrap();
-	// 		let mut entities = entities_storage.borrow_mut();
-	// 		let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
-	// 		let start = Instant::now();
-	// 		for e in entity_vec {
-	// 			let _ = black_box(entities.delete(e));
-	// 		}
-	// 		start.elapsed()
-	// 	});
-	// });
+	group.bench_function("transform/8/add-1/remove-1", move |b| {
+		b.iter_custom(|times| {
+			let (mut database, entities_storage, multi_storage) = setup(times);
+			let mut entities = entities_storage.borrow_mut();
+			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let mut multi = multi_storage.borrow_mut();
+			let mut inserter = multi.group_insert::<Type8>().unwrap();
+			{
+				let mut lock = inserter.lock(&mut multi);
+				for &e in entity_vec.iter() {
+					lock.insert(entities.valid(e).unwrap(), type8_new(e))
+						.unwrap();
+				}
+			}
+			let mut lock = multi.lock().unwrap();
+			let start = Instant::now();
+			for e in entity_vec {
+				let _ = lock.transform::<TL![D], _>(entities.valid(e).unwrap(), tl![P(e)]);
+			}
+			start.elapsed()
+		});
+	});
 }
 
 criterion_group!(benchmarks, benchmark,);

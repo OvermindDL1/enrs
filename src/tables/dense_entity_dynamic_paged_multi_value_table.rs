@@ -114,11 +114,14 @@ impl ComponentLocations {
 }
 
 pub trait DynDensePagedData {
+	fn get_type_id(&self) -> TypeId;
 	fn as_any(&self) -> &dyn std::any::Any;
+	fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 	fn get_strong(&self) -> Rc<RefCell<dyn DynDensePagedData>>;
 	fn get_idx(&self) -> usize;
 	fn ensure_group_count(&mut self, group_count: usize);
 	fn swap_remove(&mut self, group: usize, index: usize);
+	fn move_groups(&mut self, group: usize, index: usize, new_group: usize);
 }
 
 trait DynDensePagedDataCastable: 'static {
@@ -148,7 +151,15 @@ impl<ValueType: 'static> DensePagedData<ValueType> {
 }
 
 impl<ValueType: 'static> DynDensePagedData for DensePagedData<ValueType> {
+	fn get_type_id(&self) -> TypeId {
+		TypeId::of::<ValueType>()
+	}
+
 	fn as_any(&self) -> &dyn Any {
+		self
+	}
+
+	fn as_any_mut(&mut self) -> &mut dyn Any {
 		self
 	}
 
@@ -166,6 +177,11 @@ impl<ValueType: 'static> DynDensePagedData for DensePagedData<ValueType> {
 
 	fn swap_remove(&mut self, group: usize, index: usize) {
 		self.data[group].swap_remove(index);
+	}
+
+	fn move_groups(&mut self, group: usize, index: usize, new_group: usize) {
+		let value = self.data[group].swap_remove(index);
+		self.data[new_group].push(value);
 	}
 }
 
@@ -199,6 +215,7 @@ impl<EntityType: Entity, VTs: ValueTypes> Clone for GroupQuery<EntityType, VTs> 
 pub struct GroupInsert<EntityType: Entity, VTs: InsertValueTypes> {
 	group: usize,
 	storage: VTs::Storage,
+	storage_idxs: Box<[usize]>,
 	_phantom: PhantomData<EntityType>,
 }
 
@@ -207,17 +224,22 @@ impl<EntityType: Entity, VTs: InsertValueTypes> Clone for GroupInsert<EntityType
 		GroupInsert {
 			group: self.group,
 			storage: self.storage.clone(),
+			storage_idxs: self.storage_idxs.clone(),
 			_phantom: PhantomData,
 		}
 	}
 }
 
 impl<EntityType: Entity, VTs: ValueTypes> GroupQuery<EntityType, VTs> {
-	pub fn try_lock(&mut self) -> Option<GroupQueryLock<EntityType, VTs>> {
+	pub fn try_lock<'a, 't>(
+		&'a mut self,
+		table: &'t DenseEntityDynamicPagedMultiValueTable<EntityType>,
+	) -> Option<GroupQueryLock<'a, 't, EntityType, VTs>> {
 		if let Ok(storage_locked) = VTs::try_storage_locked(&self.storage) {
 			Some(GroupQueryLock {
 				group: self.group,
 				storage_locked,
+				table,
 				_phantom: PhantomData,
 			})
 		} else {
@@ -225,8 +247,11 @@ impl<EntityType: Entity, VTs: ValueTypes> GroupQuery<EntityType, VTs> {
 		}
 	}
 
-	pub fn lock<'a>(&'a mut self) -> GroupQueryLock<'a, EntityType, VTs> {
-		self.try_lock().expect("unable to lock GroupQuery")
+	pub fn lock<'a, 't>(
+		&'a mut self,
+		table: &'t DenseEntityDynamicPagedMultiValueTable<EntityType>,
+	) -> GroupQueryLock<'a, 't, EntityType, VTs> {
+		self.try_lock(table).expect("unable to lock GroupQuery")
 	}
 }
 
@@ -255,9 +280,10 @@ impl<EntityType: Entity, VTs: InsertValueTypes> GroupInsert<EntityType, VTs> {
 	}
 }
 
-pub struct GroupQueryLock<'a, EntityType: Entity, VTs: ValueTypes> {
+pub struct GroupQueryLock<'a, 's, EntityType: Entity, VTs: ValueTypes> {
 	group: usize,
 	storage_locked: VTs::StorageLocked, // When GAT's exist then pass `'a` into StorageLocked
+	table: &'s DenseEntityDynamicPagedMultiValueTable<EntityType>,
 	_phantom: PhantomData<&'a EntityType>,
 }
 
@@ -268,7 +294,30 @@ pub struct GroupInsertLock<'a, 's, EntityType: Entity, VTs: InsertValueTypes> {
 	_phantom: PhantomData<&'a ()>,
 }
 
-impl<'g, EntityType: Entity, VTs: ValueTypes> GroupQueryLock<'g, EntityType, VTs> {}
+impl<'a, 's, EntityType: Entity, VTs: ValueTypes> GroupQueryLock<'a, 's, EntityType, VTs> {
+	pub fn get<GTs: GetValueTypes<'a>>(
+		&'a mut self,
+		entity: ValidEntity<EntityType>,
+	) -> Option<GTs::GetRef> {
+		if let Ok(location) =
+			DenseEntityDynamicPagedMultiValueTable::<EntityType>::get_valid_location(
+				&self.table.reverse,
+				&self.table.entities,
+				entity.raw(),
+			) {
+			let mut cast_storages = GTs::cast_locked_storages::<VTs>(&mut self.storage_locked);
+			GTs::get::<EntityType>(
+				// TODO:  LACK OF GAT's IS SO PAINFUL!  FIX THIS WHEN GAT's EXIST!
+				// This 'should' be safeish as it's just casting lifetimes to a more constrained lifetime
+				unsafe { &mut *(&mut cast_storages as *mut GTs::StoragesLockedRef) },
+				location.group,
+				location.index,
+			)
+		} else {
+			None
+		}
+	}
+}
 
 impl<'g, 's, EntityType: Entity, VTs: InsertValueTypes> GroupInsertLock<'g, 's, EntityType, VTs> {
 	pub fn insert(
@@ -311,13 +360,13 @@ impl<EntityType: Entity, VTs: InsertValueTypes> DynGroup for GroupInsert<EntityT
 #[derive(PartialEq, Eq, Hash)]
 struct QueryTypedPagedKey<'a> {
 	include: &'a [TypeId],
-	exclude: &'a [TypeId],
+	//exclude: &'a [TypeId],
 }
 
 #[derive(PartialEq, Eq, Hash)]
 struct QueryTypedPagedKeyBoxed {
 	include: Box<[TypeId]>,
-	exclude: Box<[TypeId]>,
+	//exclude: Box<[TypeId]>,
 	include_storage_idxs: Box<[usize]>,
 }
 
@@ -328,11 +377,28 @@ impl<'a> QueryTypedPagedKey<'a> {
 	) -> QueryTypedPagedKeyBoxed {
 		QueryTypedPagedKeyBoxed {
 			include: self.include.into(),
-			exclude: self.exclude.into(),
+			//exclude: self.exclude.into(),
 			include_storage_idxs: self
 				.include
 				.iter()
 				.map(|tid| storages.get_full(tid).unwrap().0)
+				.collect(),
+		}
+	}
+
+	fn to_box_from_locked(self, storages: &AllLockedStorages) -> QueryTypedPagedKeyBoxed {
+		QueryTypedPagedKeyBoxed {
+			include: self.include.into(),
+			//exclude: self.exclude.into(),
+			include_storage_idxs: self
+				.include
+				.iter()
+				.map(|&tid| {
+					storages
+						.iter()
+						.position(|s| s.get_type_id() == tid)
+						.unwrap()
+				})
 				.collect(),
 		}
 	}
@@ -354,7 +420,7 @@ impl<'a> QueryTypedPagedKey<'a> {
 
 impl<'a> indexmap::Equivalent<QueryTypedPagedKeyBoxed> for QueryTypedPagedKey<'a> {
 	fn equivalent(&self, key: &QueryTypedPagedKeyBoxed) -> bool {
-		&*key.include == self.include && &*key.exclude == self.exclude
+		&*key.include == self.include // && &*key.exclude == self.exclude
 	}
 }
 
@@ -515,7 +581,7 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 		let exclude_tids = VTs::get_exclude_type_ids();
 		let key = QueryTypedPagedKey {
 			include: include_tids.as_slice(),
-			exclude: exclude_tids.as_slice(),
+			//exclude: exclude_tids.as_slice(),
 		};
 		let group = if let Some((idx, _key, group_page)) = self.group_inserts.get_full_mut(&key) {
 			if let Some(group_page) = group_page {
@@ -530,6 +596,8 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 				let group = GroupInsert::<EntityType, VTs> {
 					group: idx,
 					storage: VTs::get_or_create_storage(&mut self.storages),
+					storage_idxs: VTs::get_storage_idxs(&self.storages, Vec::new())
+						.into_boxed_slice(),
 					_phantom: PhantomData,
 				};
 				*group_page = Some(Box::new(group.clone()));
@@ -539,6 +607,7 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 			let group = GroupInsert::<EntityType, VTs> {
 				group: self.group_inserts.len(),
 				storage: VTs::get_or_create_storage(&mut self.storages),
+				storage_idxs: VTs::get_storage_idxs(&self.storages, Vec::new()).into_boxed_slice(),
 				_phantom: PhantomData,
 			};
 			self.group_inserts
@@ -589,16 +658,17 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 	}
 }
 
+// If this is worth increasing then please request with a reason
+type AllLockedStorages<'a> = SmallVec<
+	[OwningHandle<Rc<RefCell<dyn DynDensePagedData>>, RefMut<'a, dyn DynDensePagedData + 'static>>;
+		32],
+>;
+
 pub struct AllLock<'a, EntityType: Entity> {
 	reverse: &'a mut SecondaryEntityIndex<EntityType, ComponentLocations>,
 	entities: &'a mut Vec<Vec<EntityType>>,
-	group_inserts: &'a IndexMap<QueryTypedPagedKeyBoxed, Option<Box<dyn DynGroup>>>,
-	storages: SmallVec<
-		[OwningHandle<
-			Rc<RefCell<dyn DynDensePagedData>>,
-			RefMut<'a, dyn DynDensePagedData + 'static>,
-		>; 32],
-	>, // If this is worth increasing then please request with a reason
+	group_inserts: &'a mut IndexMap<QueryTypedPagedKeyBoxed, Option<Box<dyn DynGroup>>>,
+	storages: AllLockedStorages<'a>,
 }
 
 impl<'a, EntityType: Entity> AllLock<'a, EntityType> {
@@ -623,16 +693,151 @@ impl<'a, EntityType: Entity> AllLock<'a, EntityType> {
 
 		Ok(())
 	}
+
+	fn ensure_group_count_on_storages(
+		group_inserts: &mut IndexMap<QueryTypedPagedKeyBoxed, Option<Box<dyn DynGroup>>>,
+		entities: &mut Vec<Vec<EntityType>>,
+		storages: &mut AllLockedStorages,
+	) {
+		let groups = group_inserts.len();
+		entities.resize(groups, Vec::new());
+		for storage in storages.iter_mut() {
+			storage.ensure_group_count(groups);
+		}
+	}
+
+	pub fn transform<Remove: RemoveTypes, Add: InsertValueTypes>(
+		&mut self,
+		entity: ValidEntity<EntityType>,
+		inserter: &GroupInsert<EntityType, Add>, // Not actually used, but its existence means the type storages exist
+		add: Add::MoveData,
+	) -> Result<(), DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
+		let location = DenseEntityDynamicPagedMultiValueTable::get_valid_location_mut(
+			self.reverse,
+			self.entities,
+			entity.raw(),
+		)?;
+		let (group_key, _group_value) = self.group_inserts.get_index(location.group).unwrap();
+		let mut moving = ArrayVec::<[(TypeId, usize); 32]>::new();
+		moving.extend(
+			group_key
+				.include
+				.iter()
+				.copied()
+				.zip(group_key.include_storage_idxs.iter().copied()),
+		);
+		Remove::swap_remove_type_ids(&mut moving);
+		Add::swap_remove_type_ids(&mut moving);
+
+		// First remove the ones being perma-removed...
+		let mut removing = TypeIdCacheVec::new();
+		Remove::push_type_ids(&mut removing);
+		let storages = &mut self.storages;
+		group_key
+			.include
+			.iter()
+			.copied()
+			.zip(group_key.include_storage_idxs.iter().copied())
+			.filter(|(tid, _idx)| removing.iter().any(|t| t == tid))
+			.for_each(|(_tid, idx)| storages[idx].swap_remove(location.group, location.index));
+
+		// Then figure out where to move/add to...
+		let mut new_include = TypeIdCacheVec::new();
+		new_include.extend(moving.iter().map(|(tid, _idx)| *tid));
+		Add::push_type_ids(&mut new_include);
+		new_include.sort();
+		let key = QueryTypedPagedKey {
+			include: new_include.as_slice(),
+		};
+		let new_group_idx = if let Some((group_idx, _group_key, _group_value)) =
+			self.group_inserts.get_full(&key)
+		{
+			group_idx
+		} else {
+			self.group_inserts
+				.insert(key.to_box_from_locked(&self.storages), None);
+			Self::ensure_group_count_on_storages(
+				&mut self.group_inserts,
+				&mut self.entities,
+				&mut self.storages,
+			);
+			self.group_inserts.len() - 1
+		};
+
+		// Then add the new ones to the new location
+		Add::push_prelocked(
+			&mut self.storages,
+			&inserter.storage_idxs,
+			new_group_idx,
+			add,
+		);
+
+		// And move over all other components
+		for (_tid, idx) in moving {
+			self.storages[idx].move_groups(location.group, location.index, new_group_idx);
+		}
+
+		// And move the entity itself in the index
+		self.entities[location.group].swap_remove(location.index);
+		self.entities[new_group_idx].push(entity.raw());
+		location.group = new_group_idx;
+		location.index = self.entities[new_group_idx].len() - 1;
+		Ok(())
+	}
+}
+
+pub trait RemoveTypes: 'static {
+	fn push_type_ids(arr: &mut TypeIdCacheVec);
+	fn swap_remove_type_ids(arr: &mut ArrayVec<[(TypeId, usize); 32]>);
+}
+
+impl RemoveTypes for () {
+	#[inline]
+	fn push_type_ids(_arr: &mut TypeIdCacheVec) {}
+	#[inline]
+	fn swap_remove_type_ids(_arr: &mut ArrayVec<[(TypeId, usize); 32]>) {}
+}
+
+impl<HEAD: 'static, TAIL: RemoveTypes> RemoveTypes for (HEAD, TAIL) {
+	#[inline]
+	fn push_type_ids(arr: &mut TypeIdCacheVec) {
+		arr.push(TypeId::of::<HEAD>());
+		TAIL::push_type_ids(arr);
+	}
+	#[inline]
+	fn swap_remove_type_ids(arr: &mut ArrayVec<[(TypeId, usize); 32]>) {
+		if let Some(found_idx) = arr
+			.iter()
+			.position(|(tid, _idx)| *tid == TypeId::of::<HEAD>())
+		{
+			arr.swap_remove(found_idx);
+		}
+		TAIL::swap_remove_type_ids(arr);
+	}
 }
 
 pub trait ValueTypes: 'static {
 	type Raw: 'static;
+	type SelfRaw: 'static;
 	type Storage: 'static + Clone;
 	type StorageLocked: 'static;
+	type SingleStorageLocked: 'static;
+	fn push_type_ids(arr: &mut TypeIdCacheVec);
+	fn swap_remove_type_ids(arr: &mut ArrayVec<[(TypeId, usize); 32]>);
+	fn get_storage_idxs(
+		storages: &IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
+		vec: Vec<usize>,
+	) -> Vec<usize>;
 	fn get_or_create_storage(
 		storages: &mut IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
 	) -> Self::Storage;
 	fn try_storage_locked(storage: &Self::Storage) -> Result<Self::StorageLocked, ()>;
+	fn get_locked_storage_ref<'s, TT: ValueTypes>(
+		storages: &Self::StorageLocked,
+	) -> &'s TT::SingleStorageLocked;
+	fn get_locked_storage_ref_mut<'s, TT: ValueTypes>(
+		storages: &mut Self::StorageLocked,
+	) -> &'s mut TT::SingleStorageLocked;
 }
 
 // Ask if this should be increased in size, but honestly, more tables should probably be used instead
@@ -655,12 +860,33 @@ pub trait InsertValueTypes: ValueTypes {
 	}
 	type MoveData: 'static;
 	fn push(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveData);
+	fn push_prelocked(
+		storage_locked: &mut AllLockedStorages,
+		idxs: &[usize],
+		group: usize,
+		data: Self::MoveData,
+	);
 }
 
 impl ValueTypes for () {
 	type Raw = ();
+	type SelfRaw = ();
 	type Storage = ();
 	type StorageLocked = ();
+	type SingleStorageLocked = ();
+
+	#[inline]
+	fn push_type_ids(_arr: &mut TypeIdCacheVec) {}
+	#[inline]
+	fn swap_remove_type_ids(_arr: &mut ArrayVec<[(TypeId, usize); 32]>) {}
+
+	#[inline]
+	fn get_storage_idxs(
+		_storages: &IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
+		vec: Vec<usize>,
+	) -> Vec<usize> {
+		vec
+	}
 
 	#[inline]
 	fn get_or_create_storage(
@@ -672,11 +898,31 @@ impl ValueTypes for () {
 	fn try_storage_locked(_storage: &Self::Storage) -> Result<Self::StorageLocked, ()> {
 		Ok(())
 	}
+
+	#[inline]
+	fn get_locked_storage_ref<'s, TT: ValueTypes>(
+		_storages: &Self::StorageLocked,
+	) -> &'s TT::SingleStorageLocked {
+		panic!(
+			"requested a component type that does not exist in this storage: {}",
+			std::any::type_name::<TT::SelfRaw>()
+		)
+	}
+
+	fn get_locked_storage_ref_mut<'s, TT: ValueTypes>(
+		_storages: &mut Self::StorageLocked,
+	) -> &'s mut TT::SingleStorageLocked {
+		panic!(
+			"requested a component type that does not exist in this storage: {}",
+			std::any::type_name::<TT::SelfRaw>()
+		)
+	}
 }
 
 impl InsertValueTypes for () {
 	#[inline(always)]
 	fn fill_include_type_ids(_arr: &mut TypeIdCacheVec) {}
+
 	#[inline(always)]
 	fn fill_exclude_type_ids(_arr: &mut TypeIdCacheVec) {}
 
@@ -684,17 +930,53 @@ impl InsertValueTypes for () {
 
 	#[inline]
 	fn push(_storage_locked: &mut Self::StorageLocked, _group: usize, _data: Self::MoveData) {}
+
+	#[inline]
+	fn push_prelocked(
+		_storage_locked: &mut AllLockedStorages,
+		_idxs: &[usize],
+		_group: usize,
+		_data: Self::MoveData,
+	) {
+	}
 }
 
 pub enum CannotMoveGroupWithImmutableType {}
 
 impl<HEAD: 'static, TAIL: ValueTypes> ValueTypes for (&'static HEAD, TAIL) {
 	type Raw = (HEAD, TAIL::Raw);
+	type SelfRaw = &'static HEAD;
 	type Storage = (Rc<RefCell<DensePagedData<HEAD>>>, TAIL::Storage);
-	type StorageLocked = (
-		OwningHandle<Rc<RefCell<DensePagedData<HEAD>>>, Ref<'static, DensePagedData<HEAD>>>,
-		TAIL::StorageLocked,
-	);
+	type StorageLocked = (Self::SingleStorageLocked, TAIL::StorageLocked);
+	type SingleStorageLocked =
+		OwningHandle<Rc<RefCell<DensePagedData<HEAD>>>, Ref<'static, DensePagedData<HEAD>>>;
+
+	#[inline]
+	fn push_type_ids(arr: &mut TypeIdCacheVec) {
+		arr.push(TypeId::of::<HEAD>());
+		TAIL::push_type_ids(arr);
+	}
+
+	#[inline]
+	fn swap_remove_type_ids(arr: &mut ArrayVec<[(TypeId, usize); 32]>) {
+		if let Some(found_idx) = arr
+			.iter()
+			.position(|(tid, _idx)| *tid == TypeId::of::<HEAD>())
+		{
+			arr.swap_remove(found_idx);
+		}
+		TAIL::swap_remove_type_ids(arr);
+	}
+
+	#[inline]
+	fn get_storage_idxs(
+		storages: &IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
+		mut vec: Vec<usize>,
+	) -> Vec<usize> {
+		let idx = storages.get_full(&TypeId::of::<HEAD>()).unwrap().0;
+		vec.push(idx);
+		TAIL::get_storage_idxs(storages, vec)
+	}
 
 	#[inline]
 	fn get_or_create_storage(
@@ -722,15 +1004,69 @@ impl<HEAD: 'static, TAIL: ValueTypes> ValueTypes for (&'static HEAD, TAIL) {
 			TAIL::try_storage_locked(&storage.1)?,
 		))
 	}
+
+	#[inline]
+	fn get_locked_storage_ref<'s, TT: ValueTypes>(
+		storages: &Self::StorageLocked,
+	) -> &'s TT::SingleStorageLocked {
+		if TypeId::of::<TT::SelfRaw>() == TypeId::of::<&'static HEAD>() {
+			// TODO:  Lack of GATs sucks...  This unsafe can be removed once they exist.
+			// This unsafe 'should' be safeish considering the type is the same and we are just
+			// constraining, not widening, the lifetime.
+			unsafe {
+				&*(&storages.0 as *const Self::SingleStorageLocked
+					as *const TT::SingleStorageLocked)
+			}
+		} else {
+			TAIL::get_locked_storage_ref::<TT>(&storages.1)
+		}
+	}
+
+	#[inline]
+	fn get_locked_storage_ref_mut<'s, TT: ValueTypes>(
+		_storages: &mut Self::StorageLocked,
+	) -> &'s mut TT::SingleStorageLocked {
+		panic!(
+			"requested a component type that does not exist in this storage: {}",
+			std::any::type_name::<TT::SelfRaw>()
+		)
+	}
 }
 
 impl<HEAD: 'static, TAIL: ValueTypes> ValueTypes for (&'static mut HEAD, TAIL) {
 	type Raw = (HEAD, TAIL::Raw);
+	type SelfRaw = &'static mut HEAD;
 	type Storage = (Rc<RefCell<DensePagedData<HEAD>>>, TAIL::Storage);
-	type StorageLocked = (
-		OwningHandle<Rc<RefCell<DensePagedData<HEAD>>>, RefMut<'static, DensePagedData<HEAD>>>,
-		TAIL::StorageLocked,
-	);
+	type StorageLocked = (Self::SingleStorageLocked, TAIL::StorageLocked);
+	type SingleStorageLocked =
+		OwningHandle<Rc<RefCell<DensePagedData<HEAD>>>, RefMut<'static, DensePagedData<HEAD>>>;
+
+	#[inline]
+	fn push_type_ids(arr: &mut TypeIdCacheVec) {
+		arr.push(TypeId::of::<HEAD>());
+		TAIL::push_type_ids(arr);
+	}
+
+	#[inline]
+	fn swap_remove_type_ids(arr: &mut ArrayVec<[(TypeId, usize); 32]>) {
+		if let Some(found_idx) = arr
+			.iter()
+			.position(|(tid, _idx)| *tid == TypeId::of::<HEAD>())
+		{
+			arr.swap_remove(found_idx);
+		}
+		TAIL::swap_remove_type_ids(arr);
+	}
+
+	#[inline]
+	fn get_storage_idxs(
+		storages: &IndexMap<TypeId, Rc<RefCell<dyn DynDensePagedData>>, UniqueHasherBuilder>,
+		mut vec: Vec<usize>,
+	) -> Vec<usize> {
+		let idx = storages.get_full(&TypeId::of::<HEAD>()).unwrap().0;
+		vec.push(idx);
+		TAIL::get_storage_idxs(storages, vec)
+	}
 
 	#[inline]
 	fn get_or_create_storage(
@@ -758,6 +1094,42 @@ impl<HEAD: 'static, TAIL: ValueTypes> ValueTypes for (&'static mut HEAD, TAIL) {
 			TAIL::try_storage_locked(&storage.1)?,
 		))
 	}
+
+	#[inline]
+	fn get_locked_storage_ref<'s, TT: ValueTypes>(
+		storages: &Self::StorageLocked,
+	) -> &'s TT::SingleStorageLocked {
+		if TypeId::of::<TT::SelfRaw>() == TypeId::of::<&'static HEAD>()
+			|| TypeId::of::<TT::SelfRaw>() == TypeId::of::<&'static mut HEAD>()
+		{
+			// TODO:  Lack of GATs sucks...  This unsafe can be removed once they exist.
+			// This unsafe 'should' be safeish considering the type is the same and we are just
+			// constraining, not widening, the lifetime.
+			unsafe {
+				&*(&storages.0 as *const Self::SingleStorageLocked
+					as *const TT::SingleStorageLocked)
+			}
+		} else {
+			TAIL::get_locked_storage_ref::<TT>(&storages.1)
+		}
+	}
+
+	#[inline]
+	fn get_locked_storage_ref_mut<'s, TT: ValueTypes>(
+		storages: &mut Self::StorageLocked,
+	) -> &'s mut TT::SingleStorageLocked {
+		if TypeId::of::<TT::SelfRaw>() == TypeId::of::<&'static mut HEAD>() {
+			// TODO:  Lack of GATs sucks...  This unsafe can be removed once they exist.
+			// This unsafe 'should' be safeish considering the type is the same and we are just
+			// constraining, not widening, the lifetime.
+			unsafe {
+				&mut *(&mut storages.0 as *mut Self::SingleStorageLocked
+					as *mut TT::SingleStorageLocked)
+			}
+		} else {
+			TAIL::get_locked_storage_ref_mut::<TT>(&mut storages.1)
+		}
+	}
 }
 
 impl<HEAD: 'static, TAIL: InsertValueTypes> InsertValueTypes for (&'static mut HEAD, TAIL) {
@@ -777,6 +1149,130 @@ impl<HEAD: 'static, TAIL: InsertValueTypes> InsertValueTypes for (&'static mut H
 	fn push(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveData) {
 		storage_locked.0.push(group, data.0);
 		TAIL::push(&mut storage_locked.1, group, data.1);
+	}
+
+	#[inline]
+	fn push_prelocked(
+		storage_locked: &mut AllLockedStorages,
+		idxs: &[usize],
+		group: usize,
+		data: Self::MoveData,
+	) {
+		storage_locked[idxs[0]]
+			.as_any_mut()
+			.downcast_mut::<DensePagedData<HEAD>>()
+			.expect("failed to cast type into self?")
+			.push(group, data.0);
+		TAIL::push_prelocked(storage_locked, &idxs[1..], group, data.1)
+	}
+}
+
+pub trait GetValueTypes<'a>: ValueTypes {
+	type StoragesLockedRef: Sized;
+	// Uuuugh lack of GATs...
+	// fn get_locked_storage_ptr<'s, VTs: ValueTypes>(
+	// 	storages: &mut VTs::StorageLocked,
+	// ) -> &'s mut VTs::StorageLocked;
+	fn cast_locked_storages<VTs: ValueTypes>(
+		storages: &mut VTs::StorageLocked,
+	) -> Self::StoragesLockedRef;
+	type GetRef: 'a;
+	fn get<EntityType: Entity>(
+		storage_locked: &'a mut Self::StoragesLockedRef,
+		group: usize,
+		index: usize,
+	) -> Option<Self::GetRef>;
+}
+
+impl<'a> GetValueTypes<'a> for () {
+	type StoragesLockedRef = ();
+
+	fn cast_locked_storages<VTs: ValueTypes>(
+		storages: &mut <VTs as ValueTypes>::StorageLocked,
+	) -> Self::StoragesLockedRef {
+	}
+
+	type GetRef = ();
+
+	fn get<EntityType: Entity>(
+		_storage_locked: &'a mut Self::StorageLocked,
+		_group: usize,
+		_index: usize,
+	) -> Option<Self::GetRef> {
+		Some(())
+	}
+}
+
+impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static HEAD, TAIL) {
+	type StoragesLockedRef = (
+		&'a OwningHandle<Rc<RefCell<DensePagedData<HEAD>>>, Ref<'static, DensePagedData<HEAD>>>,
+		TAIL::StoragesLockedRef,
+	);
+
+	fn cast_locked_storages<VTs: ValueTypes>(
+		storages: &mut <VTs as ValueTypes>::StorageLocked,
+	) -> Self::StoragesLockedRef {
+		(
+			VTs::get_locked_storage_ref::<Self>(storages),
+			TAIL::cast_locked_storages::<VTs>(storages),
+		)
+	}
+
+	type GetRef = (&'a HEAD, TAIL::GetRef);
+
+	fn get<EntityType: Entity>(
+		storage_locked: &'a mut Self::StoragesLockedRef,
+		group: usize,
+		index: usize,
+	) -> Option<Self::GetRef> {
+		// TODO:  Maybe make the `group` access unchecked?
+		if let Some(found) = storage_locked.0.data[group].get(index) {
+			if let Some(rest) = TAIL::get::<EntityType>(&mut storage_locked.1, group, index) {
+				Some((found, rest))
+			} else {
+				None
+			}
+		} else {
+			None
+		}
+	}
+}
+
+impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static mut HEAD, TAIL) {
+	type StoragesLockedRef = (
+		&'a mut OwningHandle<
+			Rc<RefCell<DensePagedData<HEAD>>>,
+			RefMut<'static, DensePagedData<HEAD>>,
+		>,
+		TAIL::StoragesLockedRef,
+	);
+
+	fn cast_locked_storages<VTs: ValueTypes>(
+		storages: &mut <VTs as ValueTypes>::StorageLocked,
+	) -> Self::StoragesLockedRef {
+		(
+			VTs::get_locked_storage_ref_mut::<Self>(storages),
+			TAIL::cast_locked_storages::<VTs>(storages),
+		)
+	}
+
+	type GetRef = (&'a mut HEAD, TAIL::GetRef);
+
+	fn get<EntityType: Entity>(
+		storage_locked: &'a mut Self::StoragesLockedRef,
+		group: usize,
+		index: usize,
+	) -> Option<Self::GetRef> {
+		// TODO:  Maybe make the `group` access unchecked?
+		if let Some(found) = storage_locked.0.data[group].get_mut(index) {
+			if let Some(rest) = TAIL::get::<EntityType>(&mut storage_locked.1, group, index) {
+				Some((found, rest))
+			} else {
+				None
+			}
+		} else {
+			None
+		}
 	}
 }
 
@@ -877,6 +1373,51 @@ mod tests {
 			)
 			.unwrap();
 		(database, entities_storage, multi_storage)
+	}
+
+	#[test]
+	fn transforms() {
+		let (_database, entities_storage, multi_storage) = basic_setup();
+		let mut entities = entities_storage.borrow_mut();
+		let mut multi = multi_storage.borrow_mut();
+		let mut first_inserter = multi.group_insert::<TL![&mut bool, &mut usize]>().unwrap();
+		let mut next_inserter = multi.group_insert::<TL![&mut isize]>().unwrap();
+		let mut query_before = multi.group_query::<TL![&bool, &usize]>().unwrap();
+		let mut query_after = multi.group_query::<TL![&bool, &isize]>().unwrap();
+		let entity1 = entities.insert();
+		first_inserter
+			.lock(&mut multi)
+			.insert(entity1, tl![true, 42])
+			.unwrap();
+		assert_eq!(
+			query_before.lock(&multi).get::<TL![&usize]>(entity1),
+			Some(tl![&42])
+		);
+		assert_eq!(
+			query_before.lock(&multi).get::<TL![&bool, &usize]>(entity1),
+			Some(tl![&true, &42])
+		);
+		assert_eq!(query_after.lock(&multi).get::<TL![&isize]>(entity1), None);
+		{
+			let mut lock = multi.lock().unwrap();
+			lock.transform::<TL![usize], _>(entity1, &next_inserter, tl![21isize])
+				.unwrap();
+		}
+		assert_eq!(query_before.lock(&multi).get::<TL![&usize]>(entity1), None);
+		assert_eq!(
+			query_after.lock(&multi).get::<TL![&bool, &isize]>(entity1),
+			Some(tl![&true, &21])
+		);
+		{
+			let mut lock = multi.lock().unwrap();
+			lock.transform::<TL![isize], _>(entity1, &first_inserter, tl![false, 42usize])
+				.unwrap();
+		}
+		assert_eq!(
+			query_before.lock(&multi).get::<TL![&bool, &usize]>(entity1),
+			Some(tl![&false, &42])
+		);
+		assert_eq!(query_after.lock(&multi).get::<TL![&isize]>(entity1), None);
 	}
 
 	#[test]
