@@ -241,7 +241,7 @@ impl<EntityType: Entity, VTs: ValueTypes> GroupQuery<EntityType, VTs> {
 	) -> Option<GroupQueryLock<'a, 't, EntityType, VTs>> {
 		if let Ok(storage_locked) = VTs::try_storage_locked(&self.storage) {
 			Some(GroupQueryLock {
-				group: self.group,
+				//group: self.group,
 				storage_locked,
 				table,
 				_phantom: PhantomData,
@@ -285,7 +285,7 @@ impl<EntityType: Entity, VTs: InsertValueTypes> GroupInsert<EntityType, VTs> {
 }
 
 pub struct GroupQueryLock<'a, 's, EntityType: Entity, VTs: ValueTypes> {
-	group: usize,
+	//group: usize,
 	storage_locked: VTs::StorageLocked, // When GAT's exist then pass `'a` into StorageLocked
 	table: &'s DenseEntityDynamicPagedMultiValueTable<EntityType>,
 	_phantom: PhantomData<&'a EntityType>,
@@ -628,7 +628,7 @@ impl<EntityType: Entity> DenseEntityDynamicPagedMultiValueTable<EntityType> {
 		DenseEntityDynamicPagedMultiValueTableErrors<EntityType>,
 	> {
 		let include_tids = VTs::get_include_type_ids();
-		let exclude_tids = VTs::get_exclude_type_ids();
+		//let exclude_tids = VTs::get_exclude_type_ids();
 		let key = QueryTypedPagedKey {
 			include: include_tids.as_slice(),
 			//exclude: exclude_tids.as_slice(),
@@ -1272,13 +1272,15 @@ pub trait GetValueTypes<'a>: ValueTypes {
 impl<'a> GetValueTypes<'a> for () {
 	type StoragesLockedRef = ();
 
+	#[inline]
 	fn cast_locked_storages<VTs: ValueTypes>(
-		storages: &mut <VTs as ValueTypes>::StorageLocked,
+		_storages: &mut <VTs as ValueTypes>::StorageLocked,
 	) -> Self::StoragesLockedRef {
 	}
 
 	type GetRef = ();
 
+	#[inline]
 	fn get<EntityType: Entity>(
 		_storage_locked: &'a mut Self::StorageLocked,
 		_group: usize,
@@ -1294,6 +1296,7 @@ impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static
 		TAIL::StoragesLockedRef,
 	);
 
+	#[inline]
 	fn cast_locked_storages<VTs: ValueTypes>(
 		storages: &mut <VTs as ValueTypes>::StorageLocked,
 	) -> Self::StoragesLockedRef {
@@ -1305,6 +1308,7 @@ impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static
 
 	type GetRef = (&'a HEAD, TAIL::GetRef);
 
+	#[inline]
 	fn get<EntityType: Entity>(
 		storage_locked: &'a mut Self::StoragesLockedRef,
 		group: usize,
@@ -1332,6 +1336,7 @@ impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static
 		TAIL::StoragesLockedRef,
 	);
 
+	#[inline]
 	fn cast_locked_storages<VTs: ValueTypes>(
 		storages: &mut <VTs as ValueTypes>::StorageLocked,
 	) -> Self::StoragesLockedRef {
@@ -1343,6 +1348,7 @@ impl<'a, HEAD: 'static, TAIL: GetValueTypes<'a>> GetValueTypes<'a> for (&'static
 
 	type GetRef = (&'a mut HEAD, TAIL::GetRef);
 
+	#[inline]
 	fn get<EntityType: Entity>(
 		storage_locked: &'a mut Self::StoragesLockedRef,
 		group: usize,
@@ -1468,7 +1474,7 @@ mod tests {
 		let mut first_inserter = multi
 			.group_insert::<TL![&mut bool, &mut usize, &mut u8]>()
 			.unwrap();
-		let mut next_inserter = multi.group_insert::<TL![&mut isize]>().unwrap();
+		let next_inserter = multi.group_insert::<TL![&mut isize]>().unwrap();
 		let mut query_before = multi.group_query::<TL![&bool, &usize]>().unwrap();
 		let mut query_after = multi.group_query::<TL![&bool, &isize]>().unwrap();
 		let entity1 = entities.insert();
@@ -1566,7 +1572,7 @@ mod tests {
 		let mut multi = multi_storage.borrow_mut();
 		let mut null_inserter = multi.group_insert::<TL![]>().unwrap();
 		let mut single_inserter = multi.group_insert::<TL![&mut usize]>().unwrap();
-		let mut nulls = multi.group_query::<TL![]>().unwrap();
+		let _nulls = multi.group_query::<TL![]>().unwrap();
 		let mut singles = multi.group_query::<TL![&mut usize]>().unwrap();
 		let entity1 = entities.insert();
 		null_inserter

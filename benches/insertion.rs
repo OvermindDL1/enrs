@@ -1,3 +1,4 @@
+/*
 use criterion::*;
 use enrs::database::*;
 use enrs::tables::*;
@@ -314,3 +315,5 @@ criterion_group! {
 	//	storage_insert_u64_nil, storage_insert_u64_128,
 	//	storage_lookup_u64_nil, storage_lookup_u64_128,
 }
+
+*/

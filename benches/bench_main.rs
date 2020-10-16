@@ -1,4 +1,4 @@
-mod insertion;
+//mod insertion;
 mod other_ecs;
 mod storages;
 

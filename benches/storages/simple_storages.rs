@@ -2,7 +2,6 @@ use crate::components::*;
 use criterion::*;
 use enrs::database::Database;
 use enrs::tables::{DenseEntityValueTable, EntityTable, VecEntityValueTable};
-use enrs::{tl, TL};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Instant;
@@ -329,7 +328,7 @@ macro_rules! simple_storage_benchmark {
 					let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
 					let start = Instant::now();
 					for e in entity_vec {
-						black_box(simple.insert(entities.valid(e).unwrap(), A(e)));
+						let _ = black_box(simple.insert(entities.valid(e).unwrap(), A(e)));
 					}
 					start.elapsed()
 				});
@@ -343,7 +342,7 @@ macro_rules! simple_storage_benchmark {
 					let start = Instant::now();
 					for _i in 0..times {
 						let e = entities.insert();
-						black_box(simple.insert(e, A(e.raw())));
+						let _ = black_box(simple.insert(e, A(e.raw())));
 					}
 					start.elapsed()
 				});

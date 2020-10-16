@@ -7,7 +7,7 @@ fn entity_table(c: &mut Criterion) {
 	let mut group = c.benchmark_group("other_ecs/shipyard/EntityTable<u64>");
 	group.bench_function("insert", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			world.run(|mut ents: EntitiesViewMut| {
 				let start = Instant::now();
 				for _i in 0..times {
@@ -19,7 +19,7 @@ fn entity_table(c: &mut Criterion) {
 	});
 	group.bench_function("insert/recycled", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entities: Vec<_> = world.run(|mut entities: EntitiesViewMut| {
 				(0..times).map(|_| entities.add_entity((), ())).collect()
 			});
@@ -39,11 +39,11 @@ fn entity_table(c: &mut Criterion) {
 	});
 	group.bench_function("valid-check/exists", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entities: Vec<_> = world.run(|mut entities: EntitiesViewMut| {
 				(0..times).map(|_| entities.add_entity((), ())).collect()
 			});
-			world.run(|mut ents: EntitiesViewMut| {
+			world.run(|ents: EntitiesViewMut| {
 				let start = Instant::now();
 				for e in entities {
 					black_box(ents.is_alive(e));
@@ -54,7 +54,7 @@ fn entity_table(c: &mut Criterion) {
 	});
 	group.bench_function("valid-check/deleted", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entities: Vec<_> = world.run(|mut ents: EntitiesViewMut| {
 				(0..times).map(|_| ents.add_entity((), ())).collect()
 			});
@@ -63,7 +63,7 @@ fn entity_table(c: &mut Criterion) {
 					let _ = black_box(storages.delete(e));
 				}
 			});
-			world.run(|mut ents: EntitiesViewMut| {
+			world.run(|ents: EntitiesViewMut| {
 				let start = Instant::now();
 				for e in entities {
 					black_box(ents.is_alive(e));
@@ -74,7 +74,7 @@ fn entity_table(c: &mut Criterion) {
 	});
 	group.bench_function("delete", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entities: Vec<_> = world.run(|mut ents: EntitiesViewMut| {
 				(0..times).map(|_| ents.add_entity((), ())).collect()
 			});
@@ -93,7 +93,7 @@ fn storage_table(c: &mut Criterion) {
 	let mut group = c.benchmark_group("other_ecs/shipyard/ValueTable<A>");
 	group.bench_function("insert/no-create-entity", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entities: Vec<_> = world.run(|mut ents: EntitiesViewMut| {
 				(0..times).map(|_| ents.add_entity((), ())).collect()
 			});
@@ -108,7 +108,7 @@ fn storage_table(c: &mut Criterion) {
 	});
 	group.bench_function("insert/with-create-entity", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			world.run(|mut ents: EntitiesViewMut, mut a: ViewMut<A>| {
 				let start = Instant::now();
 				for i in 0u64..times {
@@ -340,7 +340,7 @@ fn storage_table(c: &mut Criterion) {
 	*/
 	group.bench_function("transform/8/add-1/remove-1", move |b| {
 		b.iter_custom(|times| {
-			let mut world = World::new();
+			let world = World::new();
 			let entity_vec: Vec<_> = world.run(
 				|mut ents: EntitiesViewMut,
 				 mut a: ViewMut<A>,

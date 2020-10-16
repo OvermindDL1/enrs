@@ -105,7 +105,7 @@ fn entity_table(c: &mut Criterion) {
 					EntityTable::<EntityType>::builder_with_capacity(0),
 				)
 				.unwrap();
-			let mut entities = entities_storage.borrow_mut();
+			let entities = entities_storage.borrow_mut();
 			let start = Instant::now();
 			for e in 0..times {
 				let _ = black_box(entities.valid(e));
