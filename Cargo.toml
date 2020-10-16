@@ -21,7 +21,6 @@ bitvec = "0.19" # Used for a variety of purposes, general container
 itertools = "0.9" # Useful iterator extensions that really should be built in to the standard library...
 smol_str = "0.1" # Useful small string optimized string container, 22 bytes or less is allocationless
 # For benchmarks:
-regex = { version = "1.4.1", optional = true }
 shipyard = { git = "https://github.com/leudz/shipyard.git", optional = true }
 specs = { version = "0.16.1", optional = true }
 legion = { git = "https://github.com/TomGillen/legion", features = ["extended-tuple-impls"], optional = true }
@@ -29,13 +28,14 @@ legion = { git = "https://github.com/TomGillen/legion", features = ["extended-tu
 [features]
 default = []
 enrs_disable_asserts = []
-shipyard-bench = ["regex", "shipyard"]
-specs-bench = ["regex", "specs"]
-legion-bench = ["regex", "legion"]
-all-bench = ["regex", "shipyard", "specs", "legion"]
+shipyard-bench = ["shipyard"]
+specs-bench = ["specs"]
+legion-bench = ["legion"]
+all-bench = ["shipyard", "specs", "legion"]
 
 [dev-dependencies]
 criterion = "0.3.3"
+regex = "1.4.1"
 # proc-macro2 = "1.0.9"
 # legion = "0.2.4"
 # legion = { git = "https://github.com/TomGillen/legion" }
