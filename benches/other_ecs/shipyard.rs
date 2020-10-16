@@ -337,7 +337,6 @@ fn storage_table(c: &mut Criterion) {
 			})
 		});
 	});
-	*/
 	group.bench_function("transform/8/add-1/remove-1", move |b| {
 		b.iter_custom(|times| {
 			let world = World::new();
@@ -373,6 +372,24 @@ fn storage_table(c: &mut Criterion) {
 					start.elapsed()
 				},
 			)
+		});
+	});
+	*/
+	group.bench_function("transform/add-1/remove-1", move |b| {
+		b.iter_custom(|times| {
+			let world = World::new();
+			let entity_vec: Vec<_> = world.run(|mut ents: EntitiesViewMut| {
+				(0..times).map(|_| ents.add_entity((), ())).collect()
+			});
+			world.run(|entities: EntitiesView, mut a: ViewMut<A>| {
+				let start = Instant::now();
+				for entity in entity_vec {
+					entities.add_component(&mut a, A(entity.index()), entity);
+					black_box((&a, entity));
+					black_box(a.remove(entity));
+				}
+				start.elapsed()
+			})
 		});
 	});
 }

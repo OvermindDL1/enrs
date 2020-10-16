@@ -43,7 +43,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			for e in entity_vec {
 				let _ = black_box(entities.delete(e));
 			}
@@ -65,7 +69,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			let start = Instant::now();
 			for e in entity_vec {
 				let _ = black_box(entities.valid(e));
@@ -84,7 +92,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			for &e in entity_vec.iter() {
 				let _ = black_box(entities.delete(e));
 			}
@@ -124,7 +136,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			let start = Instant::now();
 			for e in entity_vec {
 				let _ = black_box(entities.delete(e));
@@ -152,7 +168,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			let start = Instant::now();
 			for e in entity_vec {
 				let _ = black_box(entities.delete(e));
@@ -194,7 +214,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			let start = Instant::now();
 			for e in entity_vec {
 				let _ = black_box(entities.delete(e));
@@ -229,7 +253,11 @@ fn entity_table(c: &mut Criterion) {
 				)
 				.unwrap();
 			let mut entities = entities_storage.borrow_mut();
-			let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+			let entity_vec: Vec<_> = entities
+				.extend_iter()
+				.take(times as usize)
+				.map(|e| e.raw())
+				.collect();
 			let start = Instant::now();
 			for e in entity_vec {
 				let _ = black_box(entities.delete(e));

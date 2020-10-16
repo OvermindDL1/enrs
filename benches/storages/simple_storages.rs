@@ -347,6 +347,21 @@ macro_rules! simple_storage_benchmark {
 					start.elapsed()
 				});
 			});
+			group.bench_function("transform/add-1/remove-1", move |b| {
+				b.iter_custom(|times| {
+					let (_database, entities_storage, simple_storage) =
+						simple_storage_benchmark!(SETUP, $TYPE, times);
+					let mut entities = entities_storage.borrow_mut();
+					let mut simple = simple_storage.borrow_mut();
+					let entity_vec: Vec<_> = entities.extend_iter().take(times as usize).collect();
+					let start = Instant::now();
+					for e in entity_vec {
+						let _ = black_box(simple.insert(e, A(e.raw())));
+						let _ = black_box(simple.delete(e.raw()));
+					}
+					start.elapsed()
+				});
+			});
 		}
 	};
 }
