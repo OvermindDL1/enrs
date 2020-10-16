@@ -2,6 +2,8 @@
 mod other_ecs;
 mod storages;
 
+// Some of this gives warnings otherwise when some other_ecs benchmarks aren't enabled
+#[allow(dead_code)]
 mod components {
 	use enrs::{tl, TL};
 
