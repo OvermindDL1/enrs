@@ -126,6 +126,10 @@ impl<EntityType: Entity> EntityTable<EntityType> {
 		}
 	}
 
+	pub fn extend_iter(&mut self) -> InsertEntityIterator<EntityType> {
+		InsertEntityIterator(self)
+	}
+
 	pub fn delete(&mut self, entity: EntityType) -> Result<(), ()> {
 		let idx = entity.idx();
 		if idx >= self.entities.len() || self.entities[idx] != entity {
@@ -171,6 +175,29 @@ impl<'a, EntityType: Entity> Deref for ValidEntity<'a, EntityType> {
 impl<'a, EntityType: Entity> ValidEntity<'a, EntityType> {
 	pub fn raw(&self) -> EntityType {
 		self.0
+	}
+}
+
+pub struct InsertEntityIterator<'s, EntityType: Entity>(&'s mut EntityTable<EntityType>);
+
+impl<'s, EntityType: Entity> Iterator for InsertEntityIterator<'s, EntityType> {
+	type Item = ValidEntity<'s, EntityType>;
+
+	fn next(&mut self) -> Option<Self::Item> {
+		// Basically the same code as `insert`
+		if self.0.destroyed.is_null() {
+			// `destroyed` linked list is empty
+			let entity = EntityType::new(self.0.entities.len());
+			self.0.entities.push(entity);
+			Some(ValidEntity(entity, PhantomData))
+		} else {
+			let head = self.0.destroyed.idx();
+			// This unsafe is safe because the head is always in a valid index for a valid `self.destroyed`
+			// let head_entity = &mut self.entities[head];
+			let head_entity = unsafe { self.0.entities.get_unchecked_mut(head) };
+			self.0.destroyed = EntityType::new(head_entity.idx()); // New head of destroyed list
+			Some(ValidEntity(*head_entity.set_idx(head), PhantomData))
+		}
 	}
 }
 

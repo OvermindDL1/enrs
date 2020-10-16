@@ -1,9 +1,7 @@
 use crate::components::*;
 use criterion::*;
 use enrs::database::Database;
-use enrs::tables::{
-	DenseEntityDynamicPagedMultiValueTable, DenseEntityValueTable, EntityTable, VecEntityValueTable,
-};
+use enrs::tables::{DenseEntityValueTable, EntityTable, VecEntityValueTable};
 use enrs::{tl, TL};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,13 +9,7 @@ use std::time::Instant;
 
 type EntityType = u64;
 
-fn setup(
-	times: u64,
-) -> (
-	Database,
-	Rc<RefCell<EntityTable<EntityType>>>,
-	Rc<RefCell<DenseEntityDynamicPagedMultiValueTable<EntityType>>>,
-) {
+fn setup(times: u64) -> (Database, Rc<RefCell<EntityTable<EntityType>>>) {
 	let mut database = Database::new();
 	let entities_storage = database
 		.tables
@@ -26,16 +18,10 @@ fn setup(
 			EntityTable::<EntityType>::builder_with_capacity(times as usize),
 		)
 		.unwrap();
-	let multi_storage = database
-		.tables
-		.create(
-			"multi",
-			DenseEntityDynamicPagedMultiValueTable::<u64>::builder(entities_storage.clone()),
-		)
-		.unwrap();
-	(database, entities_storage, multi_storage)
+	(database, entities_storage)
 }
 
+/*
 macro_rules! delete_benchmark {
 	($GROUP:ident, $COUNT:expr, $TYPE:ty, $NEW:ident) => {
 		$GROUP.bench_function(format!("delete/{}/components-only", $COUNT), move |b| {
@@ -86,7 +72,9 @@ macro_rules! delete_benchmark {
 			);
 	};
 }
+*/
 
+/*
 fn benchmark(c: &mut Criterion) {
 	let mut group = c.benchmark_group(
 		std::any::type_name::<DenseEntityDynamicPagedMultiValueTable<EntityType>>()
@@ -94,6 +82,7 @@ fn benchmark(c: &mut Criterion) {
 			.last()
 			.unwrap(),
 	);
+	/*
 	group.bench_function("insert/1/no-create-entity", move |b| {
 		b.iter_custom(|times| {
 			let (mut database, entities_storage, multi_storage) = setup(times);
@@ -214,72 +203,6 @@ fn benchmark(c: &mut Criterion) {
 			start.elapsed()
 		});
 	});
-	group.bench_function("insert/16/no-create-entity/bulk", move |b| {
-		b.iter_custom(|times| {
-			let (mut database, entities_storage, multi_storage) = setup(times);
-			let mut entities = entities_storage.borrow_mut();
-			let mut multi = multi_storage.borrow_mut();
-			let entity_vec: Vec<_> = entities.extend_iter().take(times as usize).collect();
-			let mut inserter = multi.group_insert::<Type16>().unwrap();
-			let mut lock = inserter.lock(&mut multi);
-			let start = Instant::now();
-			lock.extend_slices(
-				&entity_vec,
-				tl![
-					(0..times).map(|i| A(i)).collect(),
-					(0..times).map(|i| B(i)).collect(),
-					(0..times).map(|i| C(i)).collect(),
-					(0..times).map(|i| D(i)).collect(),
-					(0..times).map(|i| E(i)).collect(),
-					(0..times).map(|i| F(i)).collect(),
-					(0..times).map(|i| G(i)).collect(),
-					(0..times).map(|i| H(i)).collect(),
-					(0..times).map(|i| I(i)).collect(),
-					(0..times).map(|i| J(i)).collect(),
-					(0..times).map(|i| K(i)).collect(),
-					(0..times).map(|i| L(i)).collect(),
-					(0..times).map(|i| M(i)).collect(),
-					(0..times).map(|i| N(i)).collect(),
-					(0..times).map(|i| O(i)).collect(),
-					(0..times).map(|i| P(i)).collect(),
-				],
-			);
-			start.elapsed()
-		});
-	});
-	group.bench_function("insert/16/with-create-entity/bulk", move |b| {
-		b.iter_custom(|times| {
-			let (mut database, entities_storage, multi_storage) = setup(times);
-			let mut entities = entities_storage.borrow_mut();
-			let mut multi = multi_storage.borrow_mut();
-			let mut inserter = multi.group_insert::<Type16>().unwrap();
-			let mut lock = inserter.lock(&mut multi);
-			let start = Instant::now();
-			let entity_vec: Vec<_> = entities.extend_iter().take(times as usize).collect();
-			lock.extend_slices(
-				&entity_vec,
-				tl![
-					(0..times).map(|i| A(i)).collect(),
-					(0..times).map(|i| B(i)).collect(),
-					(0..times).map(|i| C(i)).collect(),
-					(0..times).map(|i| D(i)).collect(),
-					(0..times).map(|i| E(i)).collect(),
-					(0..times).map(|i| F(i)).collect(),
-					(0..times).map(|i| G(i)).collect(),
-					(0..times).map(|i| H(i)).collect(),
-					(0..times).map(|i| I(i)).collect(),
-					(0..times).map(|i| J(i)).collect(),
-					(0..times).map(|i| K(i)).collect(),
-					(0..times).map(|i| L(i)).collect(),
-					(0..times).map(|i| M(i)).collect(),
-					(0..times).map(|i| N(i)).collect(),
-					(0..times).map(|i| O(i)).collect(),
-					(0..times).map(|i| P(i)).collect(),
-				],
-			);
-			start.elapsed()
-		});
-	});
 	group.bench_function("delete/1/components-only", move |b| {
 		b.iter_custom(|times| {
 			let (mut database, entities_storage, multi_storage) = setup(times);
@@ -378,6 +301,58 @@ fn benchmark(c: &mut Criterion) {
 			start.elapsed()
 		});
 	});
+	*/
+}
+*/
+
+macro_rules! simple_storage_benchmark {
+	(SETUP, $TYPE:ty, $TIMES:ident) => {{
+		let (mut database, entities_storage) = setup($TIMES);
+		let simple_storage = database
+			.tables
+			.create("storage", <$TYPE>::builder(entities_storage.clone()))
+			.unwrap();
+		(database, entities_storage, simple_storage)
+		}};
+	($BENCH_NAME:ident, $TYPE:ty) => {
+		fn $BENCH_NAME(c: &mut Criterion) {
+			use regex::*;
+			let re = Regex::new(r"[a-zA-Z_]+::").unwrap();
+			let name = re.replace_all(std::any::type_name::<$TYPE>(), "");
+			let mut group = c.benchmark_group(name);
+			group.bench_function("insert/no-create-entity", move |b| {
+				b.iter_custom(|times| {
+					let (_database, entities_storage, simple_storage) =
+						simple_storage_benchmark!(SETUP, $TYPE, times);
+					let mut entities = entities_storage.borrow_mut();
+					let mut simple = simple_storage.borrow_mut();
+					let entity_vec: Vec<_> = (0..times).map(|_| entities.insert().raw()).collect();
+					let start = Instant::now();
+					for e in entity_vec {
+						black_box(simple.insert(entities.valid(e).unwrap(), A(e)));
+					}
+					start.elapsed()
+				});
+			});
+			group.bench_function("insert/with-create-entity", move |b| {
+				b.iter_custom(|times| {
+					let (_database, entities_storage, simple_storage) =
+						simple_storage_benchmark!(SETUP, $TYPE, times);
+					let mut entities = entities_storage.borrow_mut();
+					let mut simple = simple_storage.borrow_mut();
+					let start = Instant::now();
+					for _i in 0..times {
+						let e = entities.insert();
+						black_box(simple.insert(e, A(e.raw())));
+					}
+					start.elapsed()
+				});
+			});
+		}
+	};
 }
 
-criterion_group!(benchmarks, benchmark,);
+simple_storage_benchmark!(vec_bench, VecEntityValueTable<EntityType, A>);
+simple_storage_benchmark!(dense_vec_bench, DenseEntityValueTable<EntityType, A>);
+
+criterion_group!(benchmarks, vec_bench, dense_vec_bench,);

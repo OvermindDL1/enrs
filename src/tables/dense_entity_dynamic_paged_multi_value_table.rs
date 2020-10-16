@@ -148,6 +148,10 @@ impl<ValueType: 'static> DensePagedData<ValueType> {
 	pub fn push(&mut self, group: usize, data: ValueType) {
 		self.data[group].push(data);
 	}
+
+	pub fn extend(&mut self, group: usize, data: impl IntoIterator<Item = ValueType>) {
+		self.data[group].extend(data);
+	}
 }
 
 impl<ValueType: 'static> DynDensePagedData for DensePagedData<ValueType> {
@@ -295,6 +299,29 @@ pub struct GroupInsertLock<'a, 's, EntityType: Entity, VTs: InsertValueTypes> {
 }
 
 impl<'a, 's, EntityType: Entity, VTs: ValueTypes> GroupQueryLock<'a, 's, EntityType, VTs> {
+	pub fn get_all(&'a mut self, entity: ValidEntity<EntityType>) -> Option<VTs::GetRef>
+	where
+		VTs: GetValueTypes<'a>,
+	{
+		if let Ok(location) =
+			DenseEntityDynamicPagedMultiValueTable::<EntityType>::get_valid_location(
+				&self.table.reverse,
+				&self.table.entities,
+				entity.raw(),
+			) {
+			let mut cast_storages = VTs::cast_locked_storages::<VTs>(&mut self.storage_locked);
+			VTs::get::<EntityType>(
+				// TODO:  LACK OF GAT's IS SO PAINFUL!  FIX THIS WHEN GAT's EXIST!
+				// This 'should' be safeish as it's just casting lifetimes to a more constrained lifetime
+				unsafe { &mut *(&mut cast_storages as *mut VTs::StoragesLockedRef) },
+				location.group,
+				location.index,
+			)
+		} else {
+			None
+		}
+	}
+
 	pub fn get<GTs: GetValueTypes<'a>>(
 		&'a mut self,
 		entity: ValidEntity<EntityType>,
@@ -333,6 +360,29 @@ impl<'g, 's, EntityType: Entity, VTs: InsertValueTypes> GroupInsertLock<'g, 's, 
 				self.group,
 			)?;
 		VTs::push(&mut self.storage_locked, location.group, data);
+		Ok(())
+	}
+
+	pub fn extend_slices(
+		&mut self,
+		entity_slice: &[ValidEntity<EntityType>],
+		data: VTs::MoveDataVec,
+	) -> Result<(), DenseEntityDynamicPagedMultiValueTableErrors<EntityType>> {
+		if !VTs::ensure_vec_length(&data, entity_slice.len()) {
+			panic!(
+				"All vecs passed to DenseEntityDynamicPagedMultiValueTable must be the same length"
+			);
+		}
+		VTs::extend(&mut self.storage_locked, self.group, data);
+		for entity in entity_slice {
+			DenseEntityDynamicPagedMultiValueTable::<EntityType>::insert_valid_location_mut(
+					&mut self.table.reverse,
+					&mut self.table.entities,
+					entity.raw(),
+					self.group,
+				).expect("Entity Already exists, when extending a DenseEntityDynamicPagedMultiValueTable then all entities must be new to it, else use `transform`");
+		}
+
 		Ok(())
 	}
 }
@@ -778,10 +828,21 @@ impl<'a, EntityType: Entity> AllLock<'a, EntityType> {
 		}
 
 		// And move the entity itself in the index
-		self.entities[location.group].swap_remove(location.index);
+		let old_location = *location;
+		self.entities[old_location.group].swap_remove(old_location.index);
 		self.entities[new_group_idx].push(entity.raw());
 		location.group = new_group_idx;
 		location.index = self.entities[new_group_idx].len() - 1;
+		// While also fixing the moved entity that took its old place if it exists
+		let old_entity_group = &mut self.entities[old_location.group];
+		if old_location.index < old_entity_group.len() {
+			let moved_entity = old_entity_group[old_location.index];
+			let location = self
+				.reverse
+				.get_mut(moved_entity)
+				.expect("This should always exist as it was just got from the entity array");
+			location.index = old_location.index;
+		}
 		Ok(())
 	}
 }
@@ -859,6 +920,7 @@ pub trait InsertValueTypes: ValueTypes {
 		vec
 	}
 	type MoveData: 'static;
+	type MoveDataVec: 'static;
 	fn push(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveData);
 	fn push_prelocked(
 		storage_locked: &mut AllLockedStorages,
@@ -866,6 +928,8 @@ pub trait InsertValueTypes: ValueTypes {
 		group: usize,
 		data: Self::MoveData,
 	);
+	fn ensure_vec_length(data: &Self::MoveDataVec, len: usize) -> bool;
+	fn extend(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveDataVec);
 }
 
 impl ValueTypes for () {
@@ -927,6 +991,7 @@ impl InsertValueTypes for () {
 	fn fill_exclude_type_ids(_arr: &mut TypeIdCacheVec) {}
 
 	type MoveData = ();
+	type MoveDataVec = ();
 
 	#[inline]
 	fn push(_storage_locked: &mut Self::StorageLocked, _group: usize, _data: Self::MoveData) {}
@@ -939,6 +1004,14 @@ impl InsertValueTypes for () {
 		_data: Self::MoveData,
 	) {
 	}
+
+	#[inline]
+	fn ensure_vec_length(_data: &Self::MoveDataVec, _len: usize) -> bool {
+		true
+	}
+
+	#[inline]
+	fn extend(_storage_locked: &mut Self::StorageLocked, _group: usize, _data: Self::MoveDataVec) {}
 }
 
 pub enum CannotMoveGroupWithImmutableType {}
@@ -1144,6 +1217,7 @@ impl<HEAD: 'static, TAIL: InsertValueTypes> InsertValueTypes for (&'static mut H
 	}
 
 	type MoveData = (HEAD, TAIL::MoveData);
+	type MoveDataVec = (Vec<HEAD>, TAIL::MoveDataVec);
 
 	#[inline]
 	fn push(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveData) {
@@ -1164,6 +1238,17 @@ impl<HEAD: 'static, TAIL: InsertValueTypes> InsertValueTypes for (&'static mut H
 			.expect("failed to cast type into self?")
 			.push(group, data.0);
 		TAIL::push_prelocked(storage_locked, &idxs[1..], group, data.1)
+	}
+
+	#[inline]
+	fn ensure_vec_length(data: &Self::MoveDataVec, len: usize) -> bool {
+		data.0.len() == len && TAIL::ensure_vec_length(&data.1, len)
+	}
+
+	#[inline]
+	fn extend(storage_locked: &mut Self::StorageLocked, group: usize, data: Self::MoveDataVec) {
+		storage_locked.0.extend(group, data.0);
+		TAIL::extend(&mut storage_locked.1, group, data.1);
 	}
 }
 
@@ -1380,14 +1465,16 @@ mod tests {
 		let (_database, entities_storage, multi_storage) = basic_setup();
 		let mut entities = entities_storage.borrow_mut();
 		let mut multi = multi_storage.borrow_mut();
-		let mut first_inserter = multi.group_insert::<TL![&mut bool, &mut usize]>().unwrap();
+		let mut first_inserter = multi
+			.group_insert::<TL![&mut bool, &mut usize, &mut u8]>()
+			.unwrap();
 		let mut next_inserter = multi.group_insert::<TL![&mut isize]>().unwrap();
 		let mut query_before = multi.group_query::<TL![&bool, &usize]>().unwrap();
 		let mut query_after = multi.group_query::<TL![&bool, &isize]>().unwrap();
 		let entity1 = entities.insert();
 		first_inserter
 			.lock(&mut multi)
-			.insert(entity1, tl![true, 42])
+			.insert(entity1, tl![true, 42, 16])
 			.unwrap();
 		assert_eq!(
 			query_before.lock(&multi).get::<TL![&usize]>(entity1),
@@ -1410,7 +1497,7 @@ mod tests {
 		);
 		{
 			let mut lock = multi.lock().unwrap();
-			lock.transform::<TL![isize], _>(entity1, &first_inserter, tl![false, 42usize])
+			lock.transform::<TL![isize], _>(entity1, &first_inserter, tl![false, 42usize, 16])
 				.unwrap();
 		}
 		assert_eq!(
@@ -1418,6 +1505,58 @@ mod tests {
 			Some(tl![&false, &42])
 		);
 		assert_eq!(query_after.lock(&multi).get::<TL![&isize]>(entity1), None);
+		assert_eq!(
+			query_before.lock(&multi).get_all(entity1),
+			Some(tl![&false, &42])
+		);
+	}
+
+	#[test]
+	fn bench_test() {
+		pub struct A(pub u64);
+		pub struct B(pub u64);
+		pub struct C(pub u64);
+		pub struct D(pub u64);
+		pub struct E(pub u64);
+		pub struct F(pub u64);
+		pub struct G(pub u64);
+		pub struct H(pub u64);
+		pub struct P(pub u64);
+
+		pub type Type8 = TL![
+			&'static mut A,
+			&'static mut B,
+			&'static mut C,
+			&'static mut D,
+			&'static mut E,
+			&'static mut F,
+			&'static mut G,
+			&'static mut H
+		];
+
+		pub fn type8_new(v: u64) -> TL![A, B, C, D, E, F, G, H] {
+			tl![A(v), B(v), C(v), D(v), E(v), F(v), G(v), H(v)]
+		}
+
+		let (_database, entities_storage, multi_storage) = basic_setup();
+		let mut entities = entities_storage.borrow_mut();
+		let entity_vec: Vec<_> = (0..100).map(|_| entities.insert().raw()).collect();
+		let mut multi = multi_storage.borrow_mut();
+		let mut inserter = multi.group_insert::<Type8>().unwrap();
+		{
+			let mut lock = inserter.lock(&mut multi);
+			for &e in entity_vec.iter() {
+				lock.insert(entities.valid(e).unwrap(), type8_new(e))
+					.unwrap();
+			}
+		}
+		let transform_to = multi.group_insert::<TL![&mut P]>().unwrap();
+		let mut lock = multi.lock().unwrap();
+		for e in entity_vec {
+			let _ = lock
+				.transform::<TL![D], _>(entities.valid(e).unwrap(), &transform_to, tl![P(e)])
+				.unwrap();
+		}
 	}
 
 	#[test]
@@ -1427,8 +1566,8 @@ mod tests {
 		let mut multi = multi_storage.borrow_mut();
 		let mut null_inserter = multi.group_insert::<TL![]>().unwrap();
 		let mut single_inserter = multi.group_insert::<TL![&mut usize]>().unwrap();
-		let nulls = multi.group_query::<TL![]>().unwrap();
-		let singles = multi.group_query::<TL![&mut usize]>().unwrap();
+		let mut nulls = multi.group_query::<TL![]>().unwrap();
+		let mut singles = multi.group_query::<TL![&mut usize]>().unwrap();
 		let entity1 = entities.insert();
 		null_inserter
 			.lock(&mut multi)
@@ -1467,5 +1606,13 @@ mod tests {
 		multi.delete(entities.valid(entity1).unwrap()).unwrap();
 		multi.delete(entities.valid(entity2).unwrap()).unwrap();
 		multi.delete(entities.valid(entity3).unwrap()).unwrap();
+		let entity_vec: Vec<_> = entities.extend_iter().take(10).collect();
+		single_inserter
+			.lock(&mut multi)
+			.extend_slices(&entity_vec, tl![(0..(entity_vec.len())).collect()])
+			.unwrap();
+		for (mut i, e) in entity_vec.iter().enumerate() {
+			assert_eq!(singles.lock(&mut multi).get_all(*e).unwrap(), tl![&mut i]);
+		}
 	}
 }

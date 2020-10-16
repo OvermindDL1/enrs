@@ -61,8 +61,16 @@ mod components {
 		tl![A(v), B(v), C(v), D(v)]
 	}
 
+	pub fn type4_new_flat(v: u64) -> (A, B, C, D) {
+		(A(v), B(v), C(v), D(v))
+	}
+
 	pub fn type8_new(v: u64) -> TL![A, B, C, D, E, F, G, H] {
 		tl![A(v), B(v), C(v), D(v), E(v), F(v), G(v), H(v)]
+	}
+
+	pub fn type8_new_flat(v: u64) -> (A, B, C, D, E, F, G, H) {
+		(A(v), B(v), C(v), D(v), E(v), F(v), G(v), H(v))
 	}
 
 	pub fn type16_new(v: u64) -> TL![A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P] {
@@ -85,11 +93,34 @@ mod components {
 			P(v)
 		]
 	}
+
+	pub fn type16_new_flat(v: u64) -> (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P) {
+		(
+			A(v),
+			B(v),
+			C(v),
+			D(v),
+			E(v),
+			F(v),
+			G(v),
+			H(v),
+			I(v),
+			J(v),
+			K(v),
+			L(v),
+			M(v),
+			N(v),
+			O(v),
+			P(v),
+		)
+	}
 }
 
 criterion::criterion_main! {
 	storages::entity_table::benchmarks,
 	storages::dense_entity_dynamic_paged_multi_value_table::benchmarks,
-	other_ecs::shipyard::benchmarks
+	storages::simple_storages::benchmarks,
+	other_ecs::shipyard::benchmarks,
+	other_ecs::legion::benchmarks,
 	//insertion::insertion,
 }
