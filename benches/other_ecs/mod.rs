@@ -1,3 +1,5 @@
+#[cfg(feature = "flecs-nightly")]
+pub mod flecs;
 #[cfg(feature = "legion")]
 pub mod legion;
 #[cfg(feature = "shipyard")]
@@ -10,5 +12,10 @@ pub mod legion {
 
 #[cfg(not(feature = "shipyard"))]
 pub mod shipyard {
+	pub fn benchmarks() {}
+}
+
+#[cfg(not(feature = "flecs-nightly"))]
+pub mod flecs {
 	pub fn benchmarks() {}
 }

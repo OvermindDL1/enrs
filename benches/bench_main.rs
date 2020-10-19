@@ -1,10 +1,13 @@
+#![cfg_attr(feature = "flecs-nightly", feature(c_variadic, register_tool))]
+
+mod utils;
 //mod insertion;
 mod other_ecs;
 mod storages;
 
 // Some of this gives warnings otherwise when some other_ecs benchmarks aren't enabled
 #[allow(dead_code)]
-mod components {
+pub mod components {
 	use enrs::{tl, TL};
 
 	pub struct A(pub u64);
@@ -122,7 +125,8 @@ criterion::criterion_main! {
 	storages::entity_table::benchmarks,
 	storages::dense_entity_dynamic_paged_multi_value_table::benchmarks,
 	storages::simple_storages::benchmarks,
-	other_ecs::shipyard::benchmarks,
+	other_ecs::flecs::benchmarks,
 	other_ecs::legion::benchmarks,
+	other_ecs::shipyard::benchmarks,
 	//insertion::insertion,
 }

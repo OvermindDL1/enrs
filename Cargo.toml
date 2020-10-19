@@ -23,7 +23,7 @@ smol_str = "0.1" # Useful small string optimized string container, 22 bytes or l
 # For benchmarks:
 shipyard = { git = "https://github.com/leudz/shipyard.git", optional = true }
 specs = { version = "0.16.1", optional = true }
-legion = { git = "https://github.com/TomGillen/legion", features = ["extended-tuple-impls"], optional = true }
+legion = { git = "https://github.com/TomGillen/legion.git", default-features = false, features = ["extended-tuple-impls"], optional = true }
 
 [features]
 default = []
@@ -32,6 +32,7 @@ shipyard-bench = ["shipyard"]
 specs-bench = ["specs"]
 legion-bench = ["legion"]
 all-bench = ["shipyard", "specs", "legion"]
+flecs-nightly = []
 
 [dev-dependencies]
 criterion = "0.3.3"
@@ -41,6 +42,7 @@ regex = "1.4.1"
 # legion = { git = "https://github.com/TomGillen/legion" }
 # shipyard = { git = "https://github.com/leudz/shipyard.git" }
 # specs = "0.16.1"
+libc = "0.2.79" # For flecs in benchmark
 
 [profile.release]
 # debug = false
